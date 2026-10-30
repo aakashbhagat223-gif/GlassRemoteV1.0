@@ -442,7 +442,7 @@ class NowPlayingService : Service() {
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setOngoing(true)
             .setShowWhen(false)
-            .addAction(action(android.R.drawable.ic_lock_silent_mode, "Mute", ACTION_MUTE))
+            .addAction(action(android.R.drawable.ic_menu_manage, "Mute", ACTION_MUTE))
             .addAction(
                 action(
                     if (playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
@@ -450,7 +450,7 @@ class NowPlayingService : Service() {
                     ACTION_TOGGLE,
                 )
             )
-            .addAction(action(android.R.drawable.ic_lock_power_off, "Power", ACTION_POWER))
+            .addAction(action(android.R.drawable.ic_menu_close_clear_cancel, "Power", ACTION_POWER))
             .setStyle(
                 Notification.MediaStyle()
                     .setMediaSession(session.sessionToken)
