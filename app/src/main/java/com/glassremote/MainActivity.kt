@@ -25,8 +25,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.Dashboard
+import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SettingsRemote
 import androidx.compose.material.icons.rounded.Tune
@@ -55,14 +55,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.glassremote.data.bluetooth.BluetoothHidController
 import com.glassremote.data.macro.MacroIds
+import com.glassremote.service.NowPlayingService
 import com.glassremote.ui.dashboard.DashboardScreen
 import com.glassremote.ui.link.LinkScreen
 import com.glassremote.ui.macros.MacrosScreen
 import com.glassremote.ui.macros.MacrosViewModel
 import com.glassremote.ui.pairing.PairingScreen
-import com.glassremote.ui.remote.RemoteHost
+import com.glassremote.ui.remote.RemoteScreen
 import com.glassremote.ui.remote.RemoteViewModel
 import com.glassremote.ui.settings.SettingsScreen
 import com.glassremote.ui.settings.SettingsViewModel
@@ -78,7 +78,6 @@ import javax.inject.Inject
 class MainActivity : ComponentActivity() {
 
     @Inject lateinit var haptics: Haptics
-    @Inject lateinit var bluetooth: BluetoothHidController
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -86,7 +85,7 @@ class MainActivity : ComponentActivity() {
             statusBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
         )
-        bluetooth.start()
+        NowPlayingService.startIfEnabled(this)
         setContent {
             val settingsVm: SettingsViewModel = hiltViewModel()
             val style by settingsVm.style.collectAsStateWithLifecycle()
@@ -123,7 +122,7 @@ private fun AppRoot(settingsVm: SettingsViewModel) {
             Column(Modifier.fillMaxSize()) {
                 Box(Modifier.weight(1f).consumeWindowInsets(WindowInsets.navigationBars)) {
                     when (tab) {
-                        0 -> RemoteHost(remoteVm)
+                        0 -> RemoteScreen(remoteVm)
                         1 -> DashboardScreen()
                         2 -> LinkScreen()
                         3 -> MacrosScreen(macrosVm)
@@ -165,7 +164,7 @@ private fun BottomNav(tab: Int, onSelect: (Int) -> Unit) {
     val items = listOf(
         "Remote" to Icons.Rounded.SettingsRemote,
         "Dashboard" to Icons.Rounded.Dashboard,
-        "Link" to Icons.Rounded.Bluetooth,
+        "Link" to Icons.Rounded.Link,
         "Macros" to Icons.Rounded.Tune,
         "Settings" to Icons.Rounded.Settings,
     )
