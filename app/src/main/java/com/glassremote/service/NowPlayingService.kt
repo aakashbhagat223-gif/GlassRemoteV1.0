@@ -372,7 +372,7 @@ class NowPlayingService : Service() {
         val html = httpGetText("https://www.youtube.com/results?search_query=$encoded&hl=en") ?: return null
         val direct = Regex("\"videoId\":\"([a-zA-Z0-9_-]{11})\"").find(html)?.groupValues?.get(1)
         if (direct != null) return direct
-        return Regex("\\\\x22videoId\\\\x22:\\\\x22([a-zA-Z0-9_-]{11})\\\\x22").find(html)?.groupValues?.get(1)
+        return Regex("\\u0022videoId\\u0022:\\u0022([a-zA-Z0-9_-]{11})\\u0022").find(html)?.groupValues?.get(1)
     }
 
     private fun findItunesArtworkUrl(query: String): String? {
