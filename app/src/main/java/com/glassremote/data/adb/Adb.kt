@@ -114,7 +114,6 @@ class AdbManager @Inject constructor(
         }
     }
 
-    /** Runs a shell command on the TV and returns its output and exit code. */
     suspend fun shellResult(command: String): ShellResult = withContext(Dispatchers.IO) {
         lock.withLock {
             if (dadb == null && !wanted) throw IllegalStateException("ADB not connected")
@@ -148,14 +147,16 @@ class AdbManager @Inject constructor(
 
 data class TvInput(val id: String, val type: Int)
 
-data class CecResult(val ok: Boolean, val output: String)
+/** Maps an app link used by the remote screen to an Android package name, or null if it isn't one. */
+fun packageForTarget(target: String): String? = when {
+    target.contains("youtube.com") -> "com.google.android.youtube.tv"
+    target.startsWith("market://launch?id=") ->
+        target.substringAfter("id=").substringBefore('&').ifBlank { null }
+    !target.contains("://") && !target.startsWith("intent:") && target.contains('.') -> target
+    else -> null
+}
 
-private val CEC_FAIL = Regex(
-    "unknown command|no shell command|not found|exception|error|usage:|invalid|unsupported",
-    RegexOption.IGNORE_CASE,
-)
-
-/** One-click native actions that go through the TV's ADB shell. */
+/** Everything that runs through the TV's ADB shell. */
 @Singleton
 class NativeActions @Inject constructor(
     private val adb: AdbManager,
@@ -206,7 +207,7 @@ class NativeActions @Inject constructor(
         return rows
     }
 
-    // ---- typing (letters and space only) ----
+    // ---- typing and keys ----
     suspend fun typeText(text: String): String = adb.shell("input text ${text.replace(" ", "%s")}")
     suspend fun keyEvent(code: Int): String = adb.shell("input keyevent $code")
 
@@ -220,62 +221,27 @@ class NativeActions @Inject constructor(
     suspend fun nativeBacklightEnabled(): Boolean = store.get(KEY_BACKLIGHT_NATIVE) != "0"
     suspend fun setNativeBacklight(on: Boolean) = store.set(KEY_BACKLIGHT_NATIVE, if (on) "1" else "0")
 
-    // ---- Jio box: HDMI-CEC keys sent by the TV, injected through the TV's ADB shell ----
+    // ---- send every key press over ADB (slower, doesn't need the remote link) ----
+    @Volatile private var keysViaAdbCache: Boolean? = null
 
-    suspend fun cecTemplate(): String = store.get(KEY_CEC_TEMPLATE).ifBlank { DEFAULT_CEC_TEMPLATE }
-    suspend fun setCecTemplate(template: String) = store.set(KEY_CEC_TEMPLATE, template)
-    suspend fun resetCecTemplate() = store.reset(KEY_CEC_TEMPLATE)
-
-    /**
-     * Sends one CEC user-control key from the TV to the device at [logicalAddress]
-     * (4 = playback device 1, normally the first box on HDMI). The shell command comes from the
-     * template: {hex} = 0x41-style, {dec} = decimal, {la} = logical address.
-     * Never falls back to the TV's own keys; a failure is returned, not hidden.
-     */
-    suspend fun sendJioCecKey(cecKeyCode: Int, logicalAddress: Int = 4): CecResult {
-        if (!connected) return CecResult(false, "ADB isn't connected")
-        val command = cecTemplate()
-            .replace("{hex}", "0x%02X".format(cecKeyCode))
-            .replace("{dec}", cecKeyCode.toString())
-            .replace("{la}", logicalAddress.toString())
-        return try {
-            val r = adb.shellResult(command)
-            val failed = r.exitCode != 0 || CEC_FAIL.containsMatchIn(r.output)
-            CecResult(!failed, r.output.trim())
-        } catch (t: Throwable) {
-            CecResult(false, t.message ?: "ADB error")
-        }
+    suspend fun keysViaAdb(): Boolean {
+        keysViaAdbCache?.let { return it }
+        val v = store.get(KEY_KEYS_ADB) == "1"
+        keysViaAdbCache = v
+        return v
     }
 
-    /** What this TV's CEC layer supports and which devices it can see on HDMI. */
-    suspend fun cecDiagnostics(): String {
-        val sb = StringBuilder()
-        sb.appendLine("hdmi_control_enabled = " + adb.shell("settings get global hdmi_control_enabled").trim())
-        sb.appendLine()
-        sb.appendLine("--- cmd hdmi_control help ---")
-        sb.appendLine(adb.shell("cmd hdmi_control help").lines().take(30).joinToString("\n"))
-        sb.appendLine()
-        sb.appendLine("--- dumpsys hdmi_control (filtered) ---")
-        val keep = Regex(
-            "logical|physical|vendor|power status|cec version|devicetype|active source|port",
-            RegexOption.IGNORE_CASE,
-        )
-        sb.append(
-            adb.shell("dumpsys hdmi_control").lines()
-                .filter { keep.containsMatchIn(it) }
-                .take(40)
-                .joinToString("\n") { it.trim() }
-        )
-        return sb.toString()
+    suspend fun setKeysViaAdb(on: Boolean) {
+        store.set(KEY_KEYS_ADB, if (on) "1" else "0")
+        keysViaAdbCache = on
     }
 
     companion object {
         const val KEY_HDMI2 = "adb_hdmi2_input"
         const val KEY_BACKLIGHT_NATIVE = "adb_backlight_native"
-        const val KEY_CEC_TEMPLATE = "adb_cec_template"
+        const val KEY_KEYS_ADB = "adb_keys_primary"
         const val BACKLIGHT_KEY = "picture_backlight"
         const val DEFAULT_HDMI2 = "com.mediatek.tis/.HdmiInputService/HW3"
-        const val DEFAULT_CEC_TEMPLATE = "cmd hdmi_control cec_key -t {la} -a {hex}"
     }
 }
 
