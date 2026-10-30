@@ -24,6 +24,7 @@ import android.media.session.MediaSession
 import android.media.session.PlaybackState
 import android.os.Build
 import android.os.IBinder
+import android.util.LruCache
 import android.view.KeyEvent
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
@@ -39,18 +40,27 @@ import com.glassremote.domain.repository.TvRepository
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import javax.inject.Inject
 
+/**
+ * Shows what the TV is playing as a media card on the phone's lock screen (and the notification shade).
+ * Fetches real thumbnails/posters from IMDb, YouTube, and iTunes based on the active app and title.
+ */
 @AndroidEntryPoint
 class NowPlayingService : Service() {
 
@@ -63,7 +73,11 @@ class NowPlayingService : Service() {
     private lateinit var session: MediaSession
     private var started = false
     private var lastKey = ""
-    private var artCache: Pair<String, Bitmap>? = null
+    private var lastTrackKey = ""
+    private var artJob: Job? = null
+
+    private var fallbackCache: Pair<String, Bitmap>? = null
+    private val networkArtCache = LruCache<String, Bitmap>(20)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -104,8 +118,10 @@ class NowPlayingService : Service() {
     }
 
     override fun onDestroy() {
+        artJob?.cancel()
         scope.cancel()
         session.release()
+        _artwork.value = null
         super.onDestroy()
     }
 
@@ -116,14 +132,17 @@ class NowPlayingService : Service() {
                 adb.state,
                 ImeBridge.state.map { it.currentApp }.distinctUntilChanged(),
             ) { np, a, app -> Triple(np, a.connected, app) }
-                .collect { (np, adbOn, app) -> processMediaState(np, adbOn, app) }
+                .collect { (np, adbOn, app) -> render(np, adbOn, app) }
         }
     }
 
-    private fun processMediaState(np: NowPlaying?, adbOn: Boolean, app: String) {
-        val appName = appLabel(np?.pkg ?: app)
+    private fun render(np: NowPlaying?, adbOn: Boolean, app: String) {
+        val rawPkg = np?.pkg ?: app
+        val appName = appLabel(rawPkg)
+        val rawTitle = np?.title?.trim().orEmpty()
+
         val title = when {
-            np != null -> np.title.ifBlank { appName.ifBlank { "TV" } }
+            np != null -> rawTitle.ifBlank { appName.ifBlank { "TV" } }
             appName.isNotBlank() -> appName
             else -> "Nothing playing"
         }
@@ -133,42 +152,202 @@ class NowPlayingService : Service() {
             else -> "Connect ADB in the app for titles"
         }
         val playing = np?.state == 3
-        val key = "$title|$subtitle|$playing|${np?.artUrl}"
+        val key = "$title|$subtitle|$playing"
         if (key == lastKey) return
         lastKey = key
 
-        scope.launch {
-            val art = if (!np?.artUrl.isNullOrBlank()) {
-                downloadArtwork(np!!.artUrl) ?: fetchCatalogArtwork(title) ?: artFor(appName.ifBlank { title })
-            } else {
-                fetchCatalogArtwork(title) ?: artFor(appName.ifBlank { title })
-            }
+        val trackKey = "$rawPkg|$rawTitle"
+        val cachedArt = if (rawTitle.isNotBlank()) networkArtCache.get(trackKey) else null
+        val initialArt = cachedArt ?: artFor(appName.ifBlank { title })
 
-            session.setMetadata(
-                MediaMetadata.Builder()
-                    .putString(MediaMetadata.METADATA_KEY_TITLE, title)
-                    .putString(MediaMetadata.METADATA_KEY_ARTIST, subtitle)
-                    .putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art)
-                    .putBitmap(MediaMetadata.METADATA_KEY_ART, art)
-                    .build()
-            )
-            session.setPlaybackState(
-                PlaybackState.Builder()
-                    .setActions(
-                        PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
-                            PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SKIP_TO_NEXT or
-                            PlaybackState.ACTION_SKIP_TO_PREVIOUS
-                    )
-                    .setState(
-                        if (playing) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED,
-                        PlaybackState.PLAYBACK_POSITION_UNKNOWN,
-                        1f,
-                    )
-                    .build()
-            )
-            getSystemService(NotificationManager::class.java)
-                .notify(NOTIF_ID, buildNotification(title, subtitle, playing, art))
+        _artwork.value = cachedArt
+        publishMediaState(title, subtitle, playing, initialArt)
+
+        // Only trigger a network lookup when we have a real media title that isn't cached yet
+        if (rawTitle.isNotBlank() && rawTitle != appName && cachedArt == null) {
+            if (trackKey != lastTrackKey) {
+                lastTrackKey = trackKey
+                artJob?.cancel()
+                artJob = scope.launch {
+                    val resolved = resolveArtwork(rawPkg, rawTitle)
+                    if (resolved != null) {
+                        networkArtCache.put(trackKey, resolved)
+                        if (lastTrackKey == trackKey) {
+                            _artwork.value = resolved
+                            publishMediaState(title, subtitle, np?.state == 3, resolved)
+                        }
+                    }
+                }
+            }
+        } else if (rawTitle.isBlank()) {
+            lastTrackKey = ""
+            artJob?.cancel()
+            _artwork.value = null
         }
+    }
+
+    private fun publishMediaState(title: String, subtitle: String, playing: Boolean, art: Bitmap) {
+        session.setMetadata(
+            MediaMetadata.Builder()
+                .putString(MediaMetadata.METADATA_KEY_TITLE, title)
+                .putString(MediaMetadata.METADATA_KEY_ARTIST, subtitle)
+                .putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art)
+                .putBitmap(MediaMetadata.METADATA_KEY_ART, art)
+                .build()
+        )
+        session.setPlaybackState(
+            PlaybackState.Builder()
+                .setActions(
+                    PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
+                        PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SKIP_TO_NEXT or
+                        PlaybackState.ACTION_SKIP_TO_PREVIOUS
+                )
+                .setState(
+                    if (playing) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED,
+                    PlaybackState.PLAYBACK_POSITION_UNKNOWN,
+                    1f,
+                )
+                .build()
+        )
+        getSystemService(NotificationManager::class.java)
+            .notify(NOTIF_ID, buildNotification(title, subtitle, playing, art))
+    }
+
+    /**
+     * Routes artwork lookup based on the active TV app, with cross-source fallbacks.
+     */
+    private suspend fun resolveArtwork(pkg: String, rawTitle: String): Bitmap? = withContext(Dispatchers.IO) {
+        runCatching {
+            val imageUrl = when {
+                pkg.contains("tvmusic") || pkg.contains("spotify") ->
+                    findItunesArtworkUrl(rawTitle)
+                        ?: findYouTubeThumbnailUrl(rawTitle)
+
+                pkg.contains("youtube") ->
+                    findYouTubeThumbnailUrl(rawTitle)
+                        ?: findImdbPosterUrl(rawTitle)
+
+                else ->
+                    // Stremio, Netflix, Prime Video, Plex, Kodi, etc. -> IMDb Catalog first
+                    findImdbPosterUrl(rawTitle)
+                        ?: findYouTubeThumbnailUrl(rawTitle)
+            }
+            imageUrl?.let { downloadBitmap(it) }
+        }.getOrNull()
+    }
+
+    /**
+     * Queries the public IMDb suggestion catalog (no API key required) for movies and series.
+     */
+    private fun findImdbPosterUrl(rawTitle: String): String? {
+        val cleaned = cleanTitleForImdb(rawTitle)
+        val slug = cleaned.lowercase()
+            .replace(Regex("[^a-z0-9]+"), "_")
+            .trim('_')
+            .take(50)
+        if (slug.isBlank()) return null
+
+        val firstChar = slug.first()
+        val url = "https://v3.sg.media-imdb.com/suggestion/$firstChar/$slug.json"
+        val body = httpGetText(url) ?: return null
+
+        val d = JSONObject(body).optJSONArray("d") ?: return null
+        for (i in 0 until d.length()) {
+            val item = d.optJSONObject(i) ?: continue
+            val id = item.optString("id")
+            // Only match titles ("tt..."), skipping person/actor entries ("nm...")
+            if (!id.startsWith("tt")) continue
+            val imgUrl = item.optJSONObject("i")?.optString("imageUrl").orEmpty()
+            if (imgUrl.isNotBlank()) {
+                // Request a resized 600px image from Amazon's CDN instead of the raw multi-MB poster
+                return imgUrl.replace(Regex("_V1_.*\\.jpg$"), "_V1_QL80_UX600_.jpg")
+            }
+        }
+        return null
+    }
+
+    /**
+     * Strips season/episode tags, resolutions, and app suffixes so IMDb matches the parent title.
+     */
+    private fun cleanTitleForImdb(title: String): String {
+        return title
+            .replace(Regex("(?i)\\bS\\d{1,2}\\s*E\\d{1,3}\\b.*"), "")
+            .replace(Regex("(?i)\\bSeason\\s*\\d+.*"), "")
+            .replace(Regex("(?i)\\bEpisode\\s*\\d+.*"), "")
+            .replace(Regex("(?i)\\bEp\\.?\\s*\\d+.*"), "")
+            .replace(Regex("\\[.*?\\]|\\(.*?\\)"), " ")
+            .replace(Regex("(?i)\\b(1080p|2160p|720p|4k|hdr|webrip|bluray)\\b.*"), "")
+            .substringBefore(" - ")
+            .substringBefore(" | ")
+            .trim()
+            .ifBlank { title }
+    }
+
+    /**
+     * Extracts the top videoId from YouTube search and returns its high-res thumbnail URL.
+     */
+    private fun findYouTubeThumbnailUrl(query: String): String? {
+        val encoded = URLEncoder.encode(query, "UTF-8")
+        val html = httpGetText("https://www.youtube.com/results?search_query=$encoded") ?: return null
+        val match = Regex("\"videoId\":\"([a-zA-Z0-9_-]{11})\"").find(html) ?: return null
+        val videoId = match.groupValues[1]
+        return "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
+    }
+
+    /**
+     * Queries Apple's public iTunes Search API for music tracks (Spotify / YouTube Music).
+     */
+    private fun findItunesArtworkUrl(query: String): String? {
+        val encoded = URLEncoder.encode(query, "UTF-8")
+        val body = httpGetText("https://itunes.apple.com/search?term=$encoded&media=music&limit=1") ?: return null
+        val results = JSONObject(body).optJSONArray("results") ?: return null
+        if (results.length() == 0) return null
+        val art100 = results.optJSONObject(0)?.optString("artworkUrl100").orEmpty()
+        return if (art100.isNotBlank()) art100.replace("100x100bb", "600x600bb") else null
+    }
+
+    private fun httpGetText(urlStr: String): String? {
+        val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 5000
+            readTimeout = 5000
+            setRequestProperty(
+                "User-Agent",
+                "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36"
+            )
+            setRequestProperty("Accept-Language", "en-US,en;q=0.9")
+        }
+        return try {
+            if (conn.responseCode in 200..299) {
+                conn.inputStream.bufferedReader().use { it.readText() }
+            } else null
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun downloadBitmap(urlStr: String): Bitmap? {
+        val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 5000
+            readTimeout = 5000
+            setRequestProperty("User-Agent", "Mozilla/5.0")
+        }
+        return try {
+            if (conn.responseCode !in 200..299) return null
+            val raw = conn.inputStream.use { BitmapFactory.decodeStream(it) } ?: return null
+            scaleBitmap(raw, 600)
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun scaleBitmap(src: Bitmap, maxDim: Int): Bitmap {
+        val w = src.width
+        val h = src.height
+        if (w <= maxDim && h <= maxDim) return src
+        val ratio = minOf(maxDim.toFloat() / w, maxDim.toFloat() / h)
+        val nw = (w * ratio).toInt().coerceAtLeast(1)
+        val nh = (h * ratio).toInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(src, nw, nh, true)
     }
 
     private fun buildNotification(title: String, subtitle: String, playing: Boolean, art: Bitmap): Notification {
@@ -220,102 +399,77 @@ class NowPlayingService : Service() {
         }
     }
 
-    private suspend fun fetchCatalogArtwork(mediaTitle: String): Bitmap? = withContext(Dispatchers.IO) {
-        val cleanTitle = mediaTitle.split(" - ", " | ", " (", " [").firstOrNull()?.trim() ?: return@withContext null
-        if (cleanTitle.isBlank() || cleanTitle == "TV" || cleanTitle == "Nothing playing") return@withContext null
-        
-        try {
-            val encodedTitle = URLEncoder.encode(cleanTitle, "UTF-8")
-            val apiEndpoint = "https://omdbapi.com"
-            val responseText = URL(apiEndpoint).readText()
-            val json = JSONObject(responseText)
-            if (json.optString("Response") == "True") {
-                val posterUrl = json.optString("Poster")
-                if (!posterUrl.isNullOrBlank() && posterUrl != "N/A") {
-                    return@withContext downloadArtwork(posterUrl)
-                }
-            }
-        } catch (e: Exception) {
-            // Fallback gracefully if rate-limits or network interruptions occur
-        }
-        null
+    /** Generated fallback artwork while real artwork is loading or when idle. */
+    private fun artFor(label: String): Bitmap {
+        fallbackCache?.let { if (it.first == label) return it.second }
+        val size = 512
+        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bmp)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.shader = LinearGradient(
+            0f, 0f, size.toFloat(), size.toFloat(),
+            0xFF5B6CFF.toInt(), 0xFFFF5FA2.toInt(), Shader.TileMode.CLAMP,
+        )
+        canvas.drawRect(0f, 0f, size.toFloat(), size.toFloat(), paint)
+        paint.shader = null
+        paint.color = Color.WHITE
+        paint.textSize = 240f
+        paint.textAlign = Paint.Align.CENTER
+        paint.typeface = Typeface.DEFAULT_BOLD
+        val letter = label.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "TV"
+        canvas.drawText(letter, size / 2f, size / 2f + 85f, paint)
+        fallbackCache = label to bmp
+        return bmp
     }
 
-    private suspend fun downloadArtwork(urlString: String): Bitmap? = withContext(Dispatchers.IO) {
-        artCache?.let { if (it.first == urlString) return@withContext it.second }
-        try {
-val url = URL(urlString)
-val connection = url.openConnection().apply {
-connectTimeout = 3000
-readTimeout = 3000
-}
-val bitmap = BitmapFactory.decodeStream(connection.getInputStream())
-if (bitmap != null) {
-artCache = urlString to bitmap
-}
-bitmap
-} catch (e: Exception) {
-null
-}
-}
-private fun artFor(label: String): Bitmap {
-artCache?.let { if (it.first == label) return it.second }
-val size = 512
-val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-val canvas = Canvas(bmp)
-val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-paint.shader = LinearGradient(
-0f, 0f, size.toFloat(), size.toFloat(),
-0xFF5B6CFF.toInt(), 0xFFFF5FA2.toInt(), Shader.TileMode.CLAMP,
-)
-canvas.drawRect(0f, 0f, size.toFloat(), size.toFloat(), paint)
-paint.shader = null
-paint.color = Color.WHITE
-paint.textSize = 240f
-paint.textAlign = Paint.Align.CENTER
-paint.typeface = Typeface.DEFAULT_BOLD
-val letter = label.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "TV"
-canvas.drawText(letter, size / 2f, size / 2f + 85f, paint)
-artCache = label to bmp
-return bmp
-}
-private fun appLabel(pkg: String): String = when {
-pkg.isBlank() -> ""
-pkg.contains("tvmusic") -> "YouTube Music"
-pkg.contains("youtube.tv") -> "YouTube"
-pkg == "com.stremio.one" -> "Stremio"
-pkg.startsWith("com.netflix") -> "Netflix"
-pkg.contains("amazonvideo") -> "Prime Video"
-pkg.contains("spotify") -> "Spotify"
-pkg.contains("launcher") -> "Home screen"
-pkg.contains("settings") -> "Settings"
-else -> pkg.substringAfterLast('.')
-}
-companion object {
-const val CHANNEL = "tv_now_playing"
-const val NOTIF_ID = 4107
-const val ACTION_PREV = "com.glassremote.action.PREV"
-const val ACTION_TOGGLE = "com.glassremote.action.TOGGLE"
-const val ACTION_NEXT = "com.glassremote.action.NEXT"
-private const val PREFS = "lockscreen"
-fun isEnabled(ctx: Context): Boolean =
-ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("enabled", false)
-fun notificationsAllowed(ctx: Context): Boolean =
-Build.VERSION.SDK_INT < 33 ||
-ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) ==
-PackageManager.PERMISSION_GRANTED
-fun setEnabled(ctx: Context, on: Boolean) {
-ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("enabled", on).apply()
-if (on) start(ctx) else stop(ctx)
-}
-fun start(ctx: Context) {
-ContextCompat.startForegroundService(ctx, Intent(ctx, NowPlayingService::class.java))
-}
-fun stop(ctx: Context) {
-ctx.stopService(Intent(ctx, NowPlayingService::class.java))
-}
-fun startIfEnabled(ctx: Context) {
-if (isEnabled(ctx) && notificationsAllowed(ctx)) start(ctx)
-}
-}
+    private fun appLabel(pkg: String): String = when {
+        pkg.isBlank() -> ""
+        pkg.contains("tvmusic") -> "YouTube Music"
+        pkg.contains("youtube.tv") -> "YouTube"
+        pkg == "com.stremio.one" -> "Stremio"
+        pkg.startsWith("com.netflix") -> "Netflix"
+        pkg.contains("amazonvideo") -> "Prime Video"
+        pkg.contains("spotify") -> "Spotify"
+        pkg.contains("launcher") -> "Home screen"
+        pkg.contains("settings") -> "Settings"
+        else -> pkg.substringAfterLast('.')
+    }
+
+    companion object {
+        private const val CHANNEL = "tv_now_playing"
+        private const val NOTIF_ID = 4107
+        private const val ACTION_PREV = "com.glassremote.action.PREV"
+        private const val ACTION_TOGGLE = "com.glassremote.action.TOGGLE"
+        private const val ACTION_NEXT = "com.glassremote.action.NEXT"
+        private const val PREFS = "lockscreen"
+
+        private val _artwork = MutableStateFlow<Bitmap?>(null)
+        /** Observe this in the Dashboard screen to render the fetched thumbnail in-app. */
+        val artwork: StateFlow<Bitmap?> = _artwork.asStateFlow()
+
+        fun isEnabled(ctx: Context): Boolean =
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("enabled", false)
+
+        fun notificationsAllowed(ctx: Context): Boolean =
+            Build.VERSION.SDK_INT < 33 ||
+                ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
+
+        fun setEnabled(ctx: Context, on: Boolean) {
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("enabled", on).apply()
+            if (on) start(ctx) else stop(ctx)
+        }
+
+        fun start(ctx: Context) {
+            ContextCompat.startForegroundService(ctx, Intent(ctx, NowPlayingService::class.java))
+        }
+
+        fun stop(ctx: Context) {
+            ctx.stopService(Intent(ctx, NowPlayingService::class.java))
+        }
+
+        fun startIfEnabled(ctx: Context) {
+            if (isEnabled(ctx) && notificationsAllowed(ctx)) start(ctx)
+        }
+    }
 }
