@@ -1,6 +1,7 @@
 package com.glassremote.data.repository
 
-import com.glassremote.data.bluetooth.BluetoothHidController
+import com.glassremote.data.adb.AdbManager
+import com.glassremote.data.adb.NativeActions
 import com.glassremote.data.network.PairingClient
 import com.glassremote.data.network.PairingSession
 import com.glassremote.data.network.RemoteSession
@@ -28,8 +29,9 @@ class TvRepositoryImpl @Inject constructor(
     private val discovery: TvDiscovery,
     private val certs: CertificateManager,
     private val store: PairedDeviceStore,
-    private val bluetooth: BluetoothHidController,
     private val resolver: TvAddressResolver,
+    private val adb: AdbManager,
+    private val actions: NativeActions,
 ) : TvRepository {
 
     private val _status = MutableStateFlow(RemoteStatus())
@@ -98,17 +100,23 @@ class TvRepositoryImpl @Inject constructor(
         }
     }
 
+    /**
+     * Key routing: ADB first if "keys over ADB" is on; otherwise the Wi-Fi remote link (fast);
+     * and if that link is down or a send fails, ADB `input keyevent` takes over.
+     */
     override suspend fun sendKey(keyCode: Int, direction: KeyDirection) {
         val session = remote
-        val wifiOk = session != null && session.isRunning.get() && _status.value.phase == LinkPhase.Ready
-        val preferBt = bluetooth.prefer.value && bluetooth.isConnected
+        val linkOk = session != null && session.isRunning.get() && _status.value.phase == LinkPhase.Ready
         val dir = when (direction) {
             KeyDirection.Short -> RemoteDirection.DIRECTION_SHORT
             KeyDirection.StartLong -> RemoteDirection.DIRECTION_START_LONG
             KeyDirection.EndLong -> RemoteDirection.DIRECTION_END_LONG
         }
         withContext(Dispatchers.IO) {
-            if (wifiOk && !preferBt && session != null) {
+            if (adb.state.value.connected && actions.keysViaAdb()) {
+                if (runCatching { actions.keyEvent(keyCode) }.isSuccess) return@withContext
+            }
+            if (linkOk && session != null) {
                 try {
                     session.sendKey(keyCode, dir)
                     return@withContext
@@ -116,7 +124,7 @@ class TvRepositoryImpl @Inject constructor(
                     session.close()
                 }
             }
-            if (bluetooth.isConnected) bluetooth.sendKey(keyCode)
+            if (adb.state.value.connected) runCatching { actions.keyEvent(keyCode) }
         }
     }
 
