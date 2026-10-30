@@ -49,10 +49,6 @@ import kotlinx.coroutines.withContext
 import java.net.URL
 import javax.inject.Inject
 
-/**
- * Shows what the TV is playing as a media card on the phone's lock screen (and the notification shade).
- * Previous / Play-Pause / Next are sent to the TV over ADB.
- */
 @AndroidEntryPoint
 class NowPlayingService : Service() {
 
@@ -250,14 +246,11 @@ class NowPlayingService : Service() {
             0f, 0f, size.toFloat(), size.toFloat(),
             0xFF5B6CFF.toInt(), 0xFFFF5FA2.toInt(), Shader.TileMode.CLAMP,
         )
-        pkg.contains("launcher") -> "Home screen"
-pkg.contains("settings") -> "Settings"
-else -> pkg.substringAfterLast('.')
-}
-companion object {
-private const val CHANNEL = "tv_now_playing"
-private const val NOTIF_ID = 4107
-private const val ACTION_PREV = "com.glassremote.action.PREV"
+        canvas.drawRect(0f, 0f, size.toFloat(), size.toFloat(), paint)
+        paint.shader = null
+        paint.color = Color.WHITE
+        paint.textSize = 240f
+        "com.glassremote.action.PREV"
 private const val ACTION_TOGGLE = "com.glassremote.action.TOGGLE"
 private const val ACTION_NEXT = "com.glassremote.action.NEXT"
 private const val PREFS = "lockscreen"
