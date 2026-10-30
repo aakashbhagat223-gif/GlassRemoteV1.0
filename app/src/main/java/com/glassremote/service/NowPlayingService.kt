@@ -59,7 +59,7 @@ import javax.inject.Inject
 
 /**
  * Shows what the TV is playing as a media card on the phone's lock screen (and the notification shade).
- * Fetches real thumbnails/posters from IMDb, Stremio Cinemeta, YouTube, and iTunes.
+ * Fetches real thumbnails/posters from Stremio Cinemeta, IMDb, YouTube, and iTunes.
  */
 @AndroidEntryPoint
 class NowPlayingService : Service() {
@@ -174,7 +174,7 @@ class NowPlayingService : Service() {
                 activeTrackKey = trackKey
                 artJob?.cancel()
                 artJob = scope.launch {
-                    val resolved = resolveArtwork(rawPkg, rawTitle, mainTitle)
+                    val resolved = resolveArtwork(rawPkg, rawTitle, mainTitle, extraSubtitle)
                     if (resolved != null) {
                         networkArtCache.put(trackKey, resolved)
                         if (activeTrackKey == trackKey) {
@@ -240,7 +240,7 @@ class NowPlayingService : Service() {
             .notify(NOTIF_ID, buildNotification(title, subtitle, playing, art))
     }
 
-    private suspend fun resolveArtwork(pkg: String, rawTitle: String, mainTitle: String): Bitmap? =
+    private suspend fun resolveArtwork(pkg: String, rawTitle: String, mainTitle: String, extraSubtitle: String): Bitmap? =
         withContext(Dispatchers.IO) {
             runCatching {
                 val urls = when {
@@ -254,12 +254,18 @@ class NowPlayingService : Service() {
                         findYouTubeThumbnailUrl(mainTitle),
                         findImdbPosterUrl(mainTitle),
                     )
-                    else -> listOfNotNull(
-                        findImdbPosterUrl(mainTitle),
-                        findCinemetaPosterUrl(mainTitle),
-                        findImdbPosterUrl(rawTitle),
-                        findYouTubeThumbnailUrl(rawTitle),
-                    )
+                    else -> {
+                        // For Stremio/Netflix/Prime: extraSubtitle is the Series Name (e.g., "Suits")
+                        // and mainTitle is the Episode Name (e.g., "Errors and Omissions").
+                        // Search Cinemeta and IMDb using the Series Name first!
+                        listOfNotNull(
+                            findCinemetaPosterUrl(extraSubtitle),
+                            findImdbPosterUrl(extraSubtitle),
+                            findCinemetaPosterUrl(mainTitle),
+                            findImdbPosterUrl(mainTitle),
+                            findYouTubeThumbnailUrl(rawTitle),
+                        )
+                    }
                 }
                 for (url in urls.distinct()) {
                     val bmp = downloadBitmap(url)
@@ -471,8 +477,7 @@ class NowPlayingService : Service() {
         )
         return Notification.Action.Builder(Icon.createWithResource(this, iconRes), label, pi).build()
     }
-
-    private fun media(code: Int) {
+        private fun media(code: Int) {
         scope.launch {
             runCatching {
                 if (adb.state.value.connected) actions.keyEvent(code) else repo.sendKey(code, KeyDirection.Short)
