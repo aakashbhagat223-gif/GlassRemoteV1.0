@@ -158,11 +158,11 @@ class NowPlayingService : Service() {
             else -> "Connect ADB in the app for titles"
         }
         val playing = np?.state == 3
-        val key = "$rawPkg\vert{}$rawTitle|$subtitle\vert{}$playing"
+        val key = "$rawPkg|$rawTitle|$subtitle|$playing"
         if (key == lastKey) return
         lastKey = key
 
-        val trackKey = "$rawPkg\vert{}$rawTitle"
+        val trackKey = "$rawPkg|$rawTitle"
         val cachedArt = if (rawTitle.isNotBlank()) networkArtCache.get(trackKey) else null
         val initialArt = cachedArt ?: artFor(appName.ifBlank { title })
 
@@ -211,7 +211,7 @@ class NowPlayingService : Service() {
         art: Bitmap,
         isResolvedArt: Boolean,
     ) {
-        val mediaId = "$title|$subtitle\vert{}${if (isResolvedArt) "real" else "fallback"}"
+        val mediaId = "$title|$subtitle|${if (isResolvedArt) "real" else "fallback"}"
         session.setMetadata(
             MediaMetadata.Builder()
                 .putString(MediaMetadata.METADATA_KEY_MEDIA_ID, mediaId)
@@ -288,7 +288,7 @@ class NowPlayingService : Service() {
             if (!item.optString("id").startsWith("tt")) continue
             val imgUrl = item.optJSONObject("i")?.optString("imageUrl").orEmpty()
             if (imgUrl.isNotBlank()) {
-                return imgUrl.replace(Regex("\\._V1_.*\\.jpg$"), "._V1_QL80_UX600_.jpg")
+                return imgUrl.replace(Regex("""\._V1_.*\.jpg$"""), "._V1_QL80_UX600_.jpg")
             }
         }
         return null
@@ -359,7 +359,7 @@ class NowPlayingService : Service() {
             conn.outputStream.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
             if (conn.responseCode !in 200..299) return null
             val body = conn.inputStream.bufferedReader().use { it.readText() }
-            Regex("\"videoId\"\\s*:\\s*\"([a-zA-Z0-9_-]{11})\"").find(body)?.groupValues?.get(1)
+            Regex(""""videoId"\s*:\s*"([a-zA-Z0-9_-]{11})"""").find(body)?.groupValues?.get(1)
         } catch (_: Exception) {
             null
         } finally {
@@ -370,9 +370,9 @@ class NowPlayingService : Service() {
     private fun findYouTubeIdViaHtml(query: String): String? {
         val encoded = URLEncoder.encode(query, "UTF-8")
         val html = httpGetText("https://www.youtube.com/results?search_query=$encoded&hl=en") ?: return null
-        val direct = Regex("\"videoId\":\"([a-zA-Z0-9_-]{11})\"").find(html)?.groupValues?.get(1)
+        val direct = Regex(""""videoId":"([a-zA-Z0-9_-]{11})"""").find(html)?.groupValues?.get(1)
         if (direct != null) return direct
-        return Regex("\\u0022videoId\\u0022:\\u0022([a-zA-Z0-9_-]{11})\\u0022").find(html)?.groupValues?.get(1)
+        return Regex("""\\x22videoId\\x22:\\x22([a-zA-Z0-9_-]{11})\\x22""").find(html)?.groupValues?.get(1)
     }
 
     private fun findItunesArtworkUrl(query: String): String? {
@@ -553,4 +553,4 @@ class NowPlayingService : Service() {
             if (isEnabled(ctx) && notificationsAllowed(ctx)) start(ctx)
         }
     }
-}
+                           }
