@@ -46,6 +46,7 @@ import com.glassremote.domain.model.BackgroundStyle
 import com.glassremote.domain.model.GlassStyle
 import com.glassremote.domain.model.TvDevice
 import com.glassremote.domain.repository.TvRepository
+import com.glassremote.ui.theme.getThemeColors
 import com.glassremote.ui.theme.glass
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.SharingStarted
@@ -81,6 +82,7 @@ fun SettingsScreen(vm: SettingsViewModel) {
     val style by vm.style.collectAsStateWithLifecycle()
     val device by vm.device.collectAsStateWithLifecycle()
     val ctx = LocalContext.current
+    val colors = getThemeColors()
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
         if (uri != null) {
@@ -99,7 +101,7 @@ fun SettingsScreen(vm: SettingsViewModel) {
             .padding(horizontal = 20.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text("Settings", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        Text("Settings", color = colors.textPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold)
 
         // Theme and Aesthetic Selection Card
         ThemeSettingsCard()
@@ -109,15 +111,15 @@ fun SettingsScreen(vm: SettingsViewModel) {
             Modifier.fillMaxWidth().glass(RoundedCornerShape(28.dp)).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text("PREVIEW", color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp)
-            Text("Living Room TV", color = Color.White, fontSize = 20.sp)
-            Text("Connected · Vol 12", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
+            Text("PREVIEW", color = colors.textSecondary, fontSize = 11.sp)
+            Text("Living Room TV", color = colors.textPrimary, fontSize = 20.sp)
+            Text("Connected · Vol 12", color = colors.textSecondary, fontSize = 13.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Box(Modifier.size(88.dp, 46.dp).glass(RoundedCornerShape(23.dp)), contentAlignment = Alignment.Center) {
-                    Text("Back", color = Color.White, fontSize = 14.sp)
+                    Text("Back", color = colors.textPrimary, fontSize = 14.sp)
                 }
                 Box(Modifier.size(64.dp).glass(CircleShape), contentAlignment = Alignment.Center) {
-                    Text("OK", color = Color.White, fontSize = 14.sp)
+                    Text("OK", color = colors.textPrimary, fontSize = 14.sp)
                 }
             }
         }
@@ -147,7 +149,7 @@ fun SettingsScreen(vm: SettingsViewModel) {
                 Button(
                     onClick = { picker.launch(arrayOf("image/*")) },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White.copy(alpha = 0.16f), contentColor = Color.White,
+                        containerColor = colors.accent.copy(alpha = 0.2f), contentColor = colors.textPrimary,
                     ),
                 ) { Text("Choose image") }
             }
@@ -158,8 +160,8 @@ fun SettingsScreen(vm: SettingsViewModel) {
         }
 
         Section("Connection") {
-            Text(device?.name ?: "No TV saved", color = Color.White, fontSize = 16.sp)
-            Text(device?.host ?: "—", color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
+            Text(device?.name ?: "No TV saved", color = colors.textPrimary, fontSize = 16.sp)
+            Text(device?.host ?: "—", color = colors.textSecondary, fontSize = 13.sp)
             Button(
                 onClick = { vm.resetPairing() },
                 colors = ButtonDefaults.buttonColors(
@@ -172,11 +174,12 @@ fun SettingsScreen(vm: SettingsViewModel) {
 
 @Composable
 private fun Section(title: String, content: @Composable ColumnScope.() -> Unit) {
+    val colors = getThemeColors()
     Column(
         Modifier.fillMaxWidth().glass(RoundedCornerShape(24.dp)).padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Text(title, color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
+        Text(title, color = colors.textSecondary, fontSize = 12.sp)
         content()
     }
 }
@@ -189,22 +192,24 @@ private fun LabeledSlider(
     onDone: (Float) -> Unit,
 ) {
     var v by remember(value) { mutableFloatStateOf(value) }
-    Text(label(v), color = Color.White, fontSize = 15.sp)
+    val colors = getThemeColors()
+    Text(label(v), color = colors.textPrimary, fontSize = 15.sp)
     Slider(
         value = v,
         onValueChange = { v = it },
         onValueChangeFinished = { onDone(v) },
         valueRange = range,
         colors = SliderDefaults.colors(
-            thumbColor = Color.White,
-            activeTrackColor = Color.White.copy(alpha = 0.8f),
-            inactiveTrackColor = Color.White.copy(alpha = 0.2f),
+            thumbColor = colors.textPrimary,
+            activeTrackColor = colors.accent,
+            inactiveTrackColor = colors.border,
         ),
     )
 }
 
 @Composable
 private fun <T> ChoiceRow(options: List<Pair<String, T>>, selected: T, onSelect: (T) -> Unit) {
+    val colors = getThemeColors()
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         options.forEach { (label, value) ->
             FilterChip(
@@ -213,9 +218,9 @@ private fun <T> ChoiceRow(options: List<Pair<String, T>>, selected: T, onSelect:
                 label = { Text(label, fontSize = 12.sp, maxLines = 1) },
                 modifier = Modifier.weight(1f),
                 colors = FilterChipDefaults.filterChipColors(
-                    selectedContainerColor = Color.White.copy(alpha = 0.22f),
-                    selectedLabelColor = Color.White,
-                    labelColor = Color.White.copy(alpha = 0.7f),
+                    selectedContainerColor = colors.accent.copy(alpha = 0.3f),
+                    selectedLabelColor = colors.textPrimary,
+                    labelColor = colors.textSecondary,
                 ),
             )
         }
