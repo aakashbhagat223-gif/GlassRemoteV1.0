@@ -60,7 +60,7 @@ import javax.inject.Inject
 /**
  * Shows what the TV is playing as a media card on the phone's lock screen (and the notification shade).
  * Fetches real thumbnails/posters from Stremio Cinemeta, IMDb, YouTube, and iTunes.
- * Includes quick notification controls for Mute, Power, Previous, Play/Pause, and Next.
+ * Features Mute, Play/Pause, and Power controls directly on the lock screen.
  */
 @AndroidEntryPoint
 class NowPlayingService : Service() {
@@ -94,8 +94,6 @@ class NowPlayingService : Service() {
             setCallback(object : MediaSession.Callback() {
                 override fun onPlay() { media(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) }
                 override fun onPause() { media(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) }
-                override fun onSkipToNext() { media(KeyEvent.KEYCODE_MEDIA_NEXT) }
-                override fun onSkipToPrevious() { media(KeyEvent.KEYCODE_MEDIA_PREVIOUS) }
             })
             isActive = true
         }
@@ -103,9 +101,7 @@ class NowPlayingService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_PREV -> media(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
             ACTION_TOGGLE -> media(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
-            ACTION_NEXT -> media(KeyEvent.KEYCODE_MEDIA_NEXT)
             ACTION_MUTE -> media(KeyEvent.KEYCODE_VOLUME_MUTE)
             ACTION_POWER -> media(KeyEvent.KEYCODE_POWER)
         }
@@ -227,11 +223,7 @@ class NowPlayingService : Service() {
         )
         session.setPlaybackState(
             PlaybackState.Builder()
-                .setActions(
-                    PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
-                        PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SKIP_TO_NEXT or
-                        PlaybackState.ACTION_SKIP_TO_PREVIOUS
-                )
+                .setActions(PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE)
                 .setState(
                     if (playing) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED,
                     PlaybackState.PLAYBACK_POSITION_UNKNOWN,
@@ -451,7 +443,6 @@ class NowPlayingService : Service() {
             .setOngoing(true)
             .setShowWhen(false)
             .addAction(action(android.R.drawable.ic_lock_silent_mode, "Mute", ACTION_MUTE))
-            .addAction(action(android.R.drawable.ic_media_previous, "Previous", ACTION_PREV))
             .addAction(
                 action(
                     if (playing) android.R.drawable.ic_media_pause else android.R.drawable.ic_media_play,
@@ -459,12 +450,11 @@ class NowPlayingService : Service() {
                     ACTION_TOGGLE,
                 )
             )
-            .addAction(action(android.R.drawable.ic_media_next, "Next", ACTION_NEXT))
             .addAction(action(android.R.drawable.ic_lock_power_off, "Power", ACTION_POWER))
             .setStyle(
                 Notification.MediaStyle()
                     .setMediaSession(session.sessionToken)
-                    .setShowActionsInCompactView(1, 2, 3)
+                    .setShowActionsInCompactView(0, 1, 2)
             )
             .build()
     }
@@ -525,9 +515,7 @@ class NowPlayingService : Service() {
         private const val CHANNEL = "tv_now_playing"
         private const val NOTIF_ID = 4107
         private const val PREFS = "lockscreen"
-        private const val ACTION_PREV = "com.glassremote.action.PREV"
         private const val ACTION_TOGGLE = "com.glassremote.action.TOGGLE"
-        private const val ACTION_NEXT = "com.glassremote.action.NEXT"
         private const val ACTION_MUTE = "com.glassremote.action.MUTE"
         private const val ACTION_POWER = "com.glassremote.action.POWER"
         private const val DESKTOP_UA =
