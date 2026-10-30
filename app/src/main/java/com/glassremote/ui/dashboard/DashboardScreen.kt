@@ -546,36 +546,39 @@ private fun NowPlayingCard(app: String, np: NowPlaying?, adbConnected: Boolean) 
     Box(Modifier.fillMaxWidth().height(170.dp).glass(RoundedCornerShape(28.dp))) {
         Box(
             Modifier.align(Alignment.CenterStart).padding(16.dp).size(110.dp)
-                .clip(RoundedCornerShape(20.dp))
         ) {
             if (artwork != null) {
-                // Soft glass-like haze / frosted blur background layer behind the thumbnail
+                // Frosted glass haze / ambient glow background layer behind the thumbnail
+                Image(
+                    bitmap = artwork!!.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .offset(y = 4.dp)
+                        .blur(20.dp, BlurredEdgeTreatment.Unbounded)
+                )
+                // Crisp foreground thumbnail with rounded corners
                 Box(
-                    Modifier.fillMaxSize()
-                        .blur(16.dp, BlurredEdgeTreatment.Unbounded)
-                        .background(colors.accent.copy(alpha = 0.35f))
+                    Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(20.dp))
                 ) {
                     Image(
                         bitmap = artwork!!.asImageBitmap(),
-                        contentDescription = null,
+                        contentDescription = "Now playing artwork",
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
                     )
                 }
-                // Crisp foreground thumbnail
-                Image(
-                    bitmap = artwork!!.asImageBitmap(),
-                    contentDescription = "Now playing artwork",
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
             } else {
                 Box(
                     Modifier.fillMaxSize()
+                        .clip(RoundedCornerShape(20.dp))
                         .blur(18.dp, BlurredEdgeTreatment.Unbounded)
                         .background(
                             Brush.linearGradient(listOf(colors.accent, colors.textSecondary)),
-                            RoundedCornerShape(24.dp),
+                            RoundedCornerShape(20.dp),
                         )
                 )
             }
