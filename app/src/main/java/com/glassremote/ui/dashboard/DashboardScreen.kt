@@ -29,17 +29,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -75,17 +69,11 @@ import com.glassremote.data.adb.AdbState
 import com.glassremote.data.adb.NativeActions
 import com.glassremote.data.adb.NowPlaying
 import com.glassremote.data.adb.NowPlayingRepository
-import com.glassremote.data.bluetooth.BluetoothHidController
-import com.glassremote.data.bluetooth.BtState
 import com.glassremote.data.ir.IrBlaster
 import com.glassremote.data.macro.MacroIds
 import com.glassremote.data.macro.MacroRunner
 import com.glassremote.data.macro.MacroStore
 import com.glassremote.data.network.ImeBridge
-import com.glassremote.data.network.PairPhase
-import com.glassremote.data.network.PairState
-import com.glassremote.data.network.ProbeResult
-import com.glassremote.data.network.StbProbe
 import com.glassremote.data.repository.PairedDeviceStore
 import com.glassremote.domain.model.LinkPhase
 import com.glassremote.domain.model.RemoteStatus
@@ -135,8 +123,6 @@ class DashboardViewModel @Inject constructor(
     nowPlayingRepo: NowPlayingRepository,
     private val adb: AdbManager,
     private val actions: NativeActions,
-    bt: BluetoothHidController,
-    private val stb: StbProbe,
     @ApplicationContext private val ctx: Context,
 ) : ViewModel() {
 
@@ -144,9 +130,6 @@ class DashboardViewModel @Inject constructor(
     val irSupported: Boolean = ir.isSupported
     val nowPlaying: StateFlow<NowPlaying?> = nowPlayingRepo.state
     val adbState: StateFlow<AdbState> = adb.state
-    val btState: StateFlow<BtState> = bt.state
-    val stbResult: StateFlow<ProbeResult> = stb.result
-    val stbPair: StateFlow<PairState> = stb.pair
 
     val device: StateFlow<TvDevice?> = store.lastDevice
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -167,12 +150,7 @@ class DashboardViewModel @Inject constructor(
         .flowOn(Dispatchers.IO)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NetInfo())
 
-    // ---- Jio box probe / pairing test ----
-    fun probeStb(host: String) { viewModelScope.launch { stb.probe(host) } }
-    fun pairStb(host: String) { viewModelScope.launch { stb.beginPairing(host) } }
-    fun submitStbCode(code: String) { viewModelScope.launch { stb.submitCode(code) } }
-
-    // ---- Backlight ----
+    // ---- Backlight: ADB first (writes the TV's own setting), menu macros as the fallback ----
     private val _backlight = MutableStateFlow<Int?>(null)
     val backlight: StateFlow<Int?> = _backlight.asStateFlow()
 
@@ -304,9 +282,6 @@ fun DashboardScreen(vm: DashboardViewModel = hiltViewModel()) {
     val nowPlaying by vm.nowPlaying.collectAsStateWithLifecycle()
     val adbState by vm.adbState.collectAsStateWithLifecycle()
     val backlight by vm.backlight.collectAsStateWithLifecycle()
-    val btState by vm.btState.collectAsStateWithLifecycle()
-    val stbResult by vm.stbResult.collectAsStateWithLifecycle()
-    val stbPair by vm.stbPair.collectAsStateWithLifecycle()
     val ctx = LocalContext.current
 
     LaunchedEffect(adbState.connected) { vm.refreshBacklight() }
@@ -332,19 +307,13 @@ fun DashboardScreen(vm: DashboardViewModel = hiltViewModel()) {
         Text("Dashboard", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
         NowPlayingCard(appLabel(currentApp), nowPlaying, adbState.connected)
 
-        TelemetryPager(
-            tvName = device?.name ?: "",
-            tvHost = device?.host ?: "",
-            tvPing = net.pingMs,
+        TvInfoCard(
+            name = device?.name ?: "",
+            host = device?.host ?: "",
+            ping = net.pingMs,
             phase = status.phase,
             adb = adbState,
             phoneIp = net.phoneIp,
-            jio = stbResult,
-            pair = stbPair,
-            btName = btState.connectedName,
-            onProbe = { vm.probeStb(it) },
-            onPair = { vm.pairStb(it) },
-            onCode = { vm.submitStbCode(it) },
         )
 
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -386,64 +355,8 @@ fun DashboardScreen(vm: DashboardViewModel = hiltViewModel()) {
     }
 }
 
-/** Swipe between the Xiaomi TV and the Jio box. */
 @Composable
-private fun TelemetryPager(
-    tvName: String,
-    tvHost: String,
-    tvPing: Int?,
-    phase: LinkPhase,
-    adb: AdbState,
-    phoneIp: String?,
-    jio: ProbeResult,
-    pair: PairState,
-    btName: String?,
-    onProbe: (String) -> Unit,
-    onPair: (String) -> Unit,
-    onCode: (String) -> Unit,
-) {
-    val pagerState = rememberPagerState(pageCount = { 2 })
-    Column(
-        Modifier.fillMaxWidth().glass(RoundedCornerShape(24.dp)).padding(vertical = 14.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        HorizontalPager(
-            state = pagerState,
-            modifier = Modifier.fillMaxWidth().height(380.dp),
-            pageSpacing = 12.dp,
-        ) { page ->
-            Column(
-                Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 18.dp),
-                verticalArrangement = Arrangement.spacedBy(6.dp),
-            ) {
-                if (page == 0) {
-                    TvPage(tvName, tvHost, tvPing, phase, adb, phoneIp)
-                } else {
-                    JioPage(jio, pair, btName, onProbe, onPair, onCode)
-                }
-            }
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-            repeat(2) { i ->
-                Box(
-                    Modifier
-                        .padding(3.dp)
-                        .size(7.dp)
-                        .background(
-                            if (pagerState.currentPage == i) Color.White else Color.White.copy(alpha = 0.3f),
-                            CircleShape,
-                        )
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun TvPage(
+private fun TvInfoCard(
     name: String,
     host: String,
     ping: Int?,
@@ -451,82 +364,29 @@ private fun TvPage(
     adb: AdbState,
     phoneIp: String?,
 ) {
-    Text(
-        "Xiaomi TV · " + name.ifBlank { "not paired" },
-        color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
-    )
-    Line("TV IP", host.ifBlank { "—" })
-    Line("Latency", ping?.let { "$it ms" } ?: "—")
-    Line(
-        "Remote link",
-        when (phase) {
-            LinkPhase.Ready -> "Live"
-            LinkPhase.Connecting -> "Connecting…"
-            LinkPhase.Disconnected -> "Down"
-            LinkPhase.Idle -> "Idle"
-        },
-    )
-    Line("Pairing", if (phase == LinkPhase.Ready) "Valid · certificate accepted" else "Not verified")
-    Line("ADB", if (adb.connected) "Connected" else "Off")
-    Line("This phone", phoneIp ?: "—")
-}
-
-@Composable
-private fun JioPage(
-    jio: ProbeResult,
-    pair: PairState,
-    btName: String?,
-    onProbe: (String) -> Unit,
-    onPair: (String) -> Unit,
-    onCode: (String) -> Unit,
-) {
-    var host by remember(jio.host) { mutableStateOf(jio.host) }
-    var code by remember { mutableStateOf("") }
-
-    Text("Jio box", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-    OutlinedTextField(
-        value = host,
-        onValueChange = { host = it },
-        singleLine = true,
-        label = { Text("Box IP") },
-        modifier = Modifier.fillMaxWidth(),
-        colors = fieldColors(),
-    )
-    Row {
-        MiniButton("Probe") { onProbe(host.trim()) }
-        MiniButton("Pair") { onPair(host.trim()) }
+    Column(
+        Modifier.fillMaxWidth().glass(RoundedCornerShape(24.dp)).padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            "Xiaomi TV · " + name.ifBlank { "not paired" },
+            color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+        )
+        Line("TV IP", host.ifBlank { "—" })
+        Line("Latency", ping?.let { "$it ms" } ?: "—")
+        Line(
+            "Remote link",
+            when (phase) {
+                LinkPhase.Ready -> "Live"
+                LinkPhase.Connecting -> "Connecting…"
+                LinkPhase.Disconnected -> "Down"
+                LinkPhase.Idle -> "Idle"
+            },
+        )
+        Line("Pairing", if (phase == LinkPhase.Ready) "Valid · certificate accepted" else "Not verified")
+        Line("ADB", if (adb.connected) "Connected" else "Off")
+        Line("This phone", phoneIp ?: "—")
     }
-    Line("Reachable", jio.pingMs?.let { "$it ms" } ?: "—")
-    Line("Cast name", jio.castName ?: "—")
-    Line("Model", listOfNotNull(jio.castMaker, jio.castModel).joinToString(" ").ifBlank { "—" })
-    Line("Open ports", if (jio.openPorts.isEmpty()) "—" else jio.openPorts.joinToString())
-    Line(
-        "Remote protocol (6466/6467)",
-        when {
-            6466 in jio.openPorts || 6467 in jio.openPorts -> "Open"
-            jio.openPorts.isNotEmpty() -> "Closed"
-            else -> "—"
-        },
-    )
-    Line("Pairing", pair.phase.name)
-    if (pair.message.isNotBlank()) {
-        Text(pair.message, color = Color.White.copy(alpha = 0.6f), fontSize = 12.sp)
-    }
-    if (pair.phase == PairPhase.AwaitingCode) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(
-                value = code,
-                onValueChange = { code = it.uppercase().filter { c -> c in "0123456789ABCDEF" }.take(6) },
-                singleLine = true,
-                label = { Text("Code") },
-                modifier = Modifier.weight(1f),
-                colors = fieldColors(),
-            )
-            MiniButton("Submit") { onCode(code) }
-        }
-    }
-    Line("Bluetooth", btName ?: "not connected")
-    Text(jio.message, color = Color.White.copy(alpha = 0.45f), fontSize = 11.sp)
 }
 
 @Composable
@@ -544,25 +404,6 @@ private fun Line(label: String, value: String) {
         )
     }
 }
-
-@Composable
-private fun MiniButton(label: String, onClick: () -> Unit) {
-    TextButton(
-        onClick = onClick,
-        colors = ButtonDefaults.textButtonColors(contentColor = Color.White),
-    ) { Text(label, fontSize = 13.sp) }
-}
-
-@Composable
-private fun fieldColors() = OutlinedTextFieldDefaults.colors(
-    focusedTextColor = Color.White,
-    unfocusedTextColor = Color.White,
-    cursorColor = Color.White,
-    focusedBorderColor = Color.White.copy(alpha = 0.6f),
-    unfocusedBorderColor = Color.White.copy(alpha = 0.25f),
-    focusedLabelColor = Color.White.copy(alpha = 0.7f),
-    unfocusedLabelColor = Color.White.copy(alpha = 0.5f),
-)
 
 @Composable
 private fun SpringBacklightCard(
