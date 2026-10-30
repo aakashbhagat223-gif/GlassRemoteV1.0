@@ -4,12 +4,10 @@ import android.view.KeyEvent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.glassremote.data.adb.AdbManager
-import com.glassremote.data.adb.AdbState
 import com.glassremote.data.adb.NativeActions
-import com.glassremote.data.macro.CecKeys
+import com.glassremote.data.adb.packageForTarget
 import com.glassremote.data.macro.MacroIds
 import com.glassremote.data.macro.MacroRecorder
-import com.glassremote.data.macro.MacroRunState
 import com.glassremote.data.macro.MacroRunner
 import com.glassremote.data.macro.MacroStore
 import com.glassremote.data.network.ImeBridge
@@ -36,9 +34,6 @@ import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 
-/** Which device the remote layout is currently driving. */
-enum class ControlTarget { XIAOMI_TV, JIO_BOX }
-
 @HiltViewModel
 class RemoteViewModel @Inject constructor(
     private val repo: TvRepository,
@@ -61,24 +56,9 @@ class RemoteViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.Eagerly, "")
 
     val ime: StateFlow<ImeInfo> = ImeBridge.state
-    val macroState: StateFlow<MacroRunState> = runner.state
-    val adbState: StateFlow<AdbState> = adb.state
 
     private val _replaceMode = MutableStateFlow(true)
     val replaceMode: StateFlow<Boolean> = _replaceMode.asStateFlow()
-
-    // ---- Control target (Xiaomi TV / Jio box) ----
-    private val _target = MutableStateFlow(ControlTarget.XIAOMI_TV)
-    val target: StateFlow<ControlTarget> = _target.asStateFlow()
-
-    private val _jioNote = MutableStateFlow("")
-    val jioNote: StateFlow<String> = _jioNote.asStateFlow()
-
-    private val _cecTemplate = MutableStateFlow(NativeActions.DEFAULT_CEC_TEMPLATE)
-    val cecTemplate: StateFlow<String> = _cecTemplate.asStateFlow()
-
-    private val _cecOutput = MutableStateFlow("")
-    val cecOutput: StateFlow<String> = _cecOutput.asStateFlow()
 
     private var typed = ""
 
@@ -87,7 +67,6 @@ class RemoteViewModel @Inject constructor(
 
     init {
         reconnect()
-        viewModelScope.launch { _cecTemplate.value = nativeActions.cecTemplate() }
         viewModelScope.launch { for (op in adbOps) runCatching { op() } }
         viewModelScope.launch {
             var retries = 0
@@ -118,119 +97,40 @@ class RemoteViewModel @Inject constructor(
         }
     }
 
-    // ---- Target switching ----
-
-    fun setTarget(t: ControlTarget) {
-        if (_target.value == t) return
-        _target.value = t
-        if (t == ControlTarget.JIO_BOX) prepareJio()
-    }
-
-    fun cancelMacro() = runner.cancel()
-
-    /** Puts the TV on the HDMI 2 input the Jio box is plugged into. */
-    private fun prepareJio() {
-        viewModelScope.launch {
-            _jioNote.value = "Switching the TV to HDMI 2…"
-            runCatching {
-                if (adb.state.value.connected) {
-                    nativeActions.switchInput(nativeActions.hdmi2OrDefault())
-                    _jioNote.value = "TV is on HDMI 2"
-                } else {
-                    runner.run(macros.get(MacroIds.HDMI2), label = "HDMI 2")
-                    _jioNote.value = "Ran the HDMI 2 macro (connect ADB for the instant switch)"
-                }
-            }.onFailure { _jioNote.value = "Couldn't switch input: ${it.message}" }
-        }
-    }
-
-    /**
-     * Jio box key. Goes only through the TV's CEC (ADB shell), never to the TV's own keys, so
-     * nothing can disturb the TV. Volume and mute are the exception: they control the TV's audio.
-     */
-    fun jioKey(androidKey: Int) {
-        if (androidKey == KeyEvent.KEYCODE_VOLUME_UP ||
-            androidKey == KeyEvent.KEYCODE_VOLUME_DOWN ||
-            androidKey == KeyEvent.KEYCODE_VOLUME_MUTE
-        ) {
-            viewModelScope.launch { runCatching { repo.sendKey(androidKey, KeyDirection.Short) } }
-            return
-        }
-        val cec = CecKeys.fromAndroidKey(androidKey)
-        if (cec == null) {
-            _jioNote.value = "That key has no CEC code"
-            return
-        }
-        viewModelScope.launch {
-            val r = nativeActions.sendJioCecKey(cec)
-            _jioNote.value = if (r.ok) "" else "CEC failed: " + r.output.ifBlank { "no output" }.take(90)
-        }
-    }
-
-    fun cecTest() {
-        viewModelScope.launch {
-            _cecOutput.value = "Sending SELECT (0x00)…"
-            val r = nativeActions.sendJioCecKey(CecKeys.SELECT)
-            _cecOutput.value = (if (r.ok) "OK: " else "FAILED: ") + r.output.ifBlank { "(no output)" }
-        }
-    }
-
-    fun cecDiagnostics() {
-        viewModelScope.launch {
-            _cecOutput.value = "Running diagnostics…"
-            _cecOutput.value = runCatching { nativeActions.cecDiagnostics() }
-                .getOrElse { "Error: ${it.message}" }
-        }
-    }
-
-    fun saveCecTemplate(template: String) {
-        viewModelScope.launch {
-            nativeActions.setCecTemplate(template)
-            _cecTemplate.value = nativeActions.cecTemplate()
-        }
-    }
-
-    fun resetCecTemplate() {
-        viewModelScope.launch {
-            nativeActions.resetCecTemplate()
-            _cecTemplate.value = nativeActions.cecTemplate()
-        }
-    }
-
-    // ---- TV keys ----
-
+    /** Key routing (ADB / remote link / ADB fallback) lives in the repository. */
     fun key(code: Int) {
-        if (_target.value == ControlTarget.JIO_BOX) {
-            jioKey(code)
-            return
-        }
         recorder.onKey(code)
         viewModelScope.launch { runCatching { repo.sendKey(code, KeyDirection.Short) } }
     }
 
+    /** ADB first (by package); if ADB is off or fails, the app link goes over the remote link. */
     fun launchApp(target: String) {
-        viewModelScope.launch { runCatching { repo.launchApp(target) } }
-    }
-
-    fun runMacro(id: String) {
         viewModelScope.launch {
-            runCatching {
-                if (id == MacroIds.HDMI2 && adb.state.value.connected) {
-                    nativeActions.switchInput(nativeActions.hdmi2OrDefault())
-                    return@launch
-                }
-                runner.run(macros.get(id), label = MacroIds.title(id))
-            }
+            val pkg = packageForTarget(target)
+            if (pkg != null && adb.state.value.connected &&
+                runCatching { nativeActions.launchPackage(pkg) }.isSuccess
+            ) return@launch
+            runCatching { repo.launchApp(target) }
         }
     }
 
+    /** HDMI 2: ADB input switch first, your macro as the fallback. */
+    fun runMacro(id: String) {
+        viewModelScope.launch {
+            if (id == MacroIds.HDMI2 && adb.state.value.connected &&
+                runCatching { nativeActions.switchInput(nativeActions.hdmi2OrDefault()) }.isSuccess
+            ) return@launch
+            runCatching { runner.run(macros.get(id), label = MacroIds.title(id)) }
+        }
+    }
+
+    /** Stremio: ADB launch first; then the saved link or macro. */
     fun openStremio() {
         viewModelScope.launch {
+            if (adb.state.value.connected &&
+                runCatching { nativeActions.launchPackage("com.stremio.one") }.isSuccess
+            ) return@launch
             runCatching {
-                if (adb.state.value.connected) {
-                    nativeActions.launchPackage("com.stremio.one")
-                    return@launch
-                }
                 val macro = macros.get(MacroIds.STREMIO).trim()
                 when {
                     macro.isBlank() -> repo.launchApp("stremio://")
