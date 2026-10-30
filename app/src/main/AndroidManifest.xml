@@ -7,15 +7,13 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.VIBRATE" />
-
-    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
 
     <uses-permission android:name="android.permission.TRANSMIT_IR" />
 
     <uses-feature android:name="android.hardware.consumerir" android:required="false" />
-    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
     <uses-feature android:name="android.hardware.wifi" android:required="true" />
 
     <application
@@ -25,8 +23,13 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:label="Android TV Remote +"
         android:supportsRtl="true"
-        android:usesCleartextTraffic="true"
         android:theme="@android:style/Theme.Material.NoActionBar">
+
+        <service
+            android:name=".service.NowPlayingService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true">
