@@ -158,11 +158,11 @@ class NowPlayingService : Service() {
             else -> "Connect ADB in the app for titles"
         }
         val playing = np?.state == 3
-        val key = "$rawPkg|$rawTitle|$subtitle|$playing"
+        val key = "$rawPkg\vert{}$rawTitle|$subtitle\vert{}$playing"
         if (key == lastKey) return
         lastKey = key
 
-        val trackKey = "$rawPkg|$rawTitle"
+        val trackKey = "$rawPkg\vert{}$rawTitle"
         val cachedArt = if (rawTitle.isNotBlank()) networkArtCache.get(trackKey) else null
         val initialArt = cachedArt ?: artFor(appName.ifBlank { title })
 
@@ -191,11 +191,6 @@ class NowPlayingService : Service() {
         }
     }
 
-    /**
-     * Android TV's media_session dumps `Title, Subtitle` separated by a comma.
-     * - Stremio / Netflix / Prime: `Two and a Half Men, Mmm, Fish. Yum.` -> (`Two and a Half Men`, `Mmm, Fish. Yum.`)
-     * - YouTube: `I Camped in The Loneliest Forest in America, Tonio` -> (`I Camped in The Loneliest Forest in America`, `Tonio`)
-     */
     private fun splitTitleAndSubtitle(pkg: String, rawTitle: String): Pair<String, String> {
         if (!rawTitle.contains(",")) return rawTitle to ""
         return if (pkg.contains("youtube") || pkg.contains("tvmusic") || pkg.contains("spotify")) {
@@ -203,9 +198,9 @@ class NowPlayingService : Service() {
             val sub = rawTitle.substringAfterLast(",").trim()
             if (main.isNotBlank()) main to sub else rawTitle to ""
         } else {
-            val main = rawTitle.substringBefore(",").trim()
-            val sub = rawTitle.substringAfter(",").trim()
-            if (main.isNotBlank()) main to sub else rawTitle to ""
+            val show = rawTitle.substringBefore(",").trim()
+            val episode = rawTitle.substringAfter(",").trim()
+            if (episode.isNotBlank()) episode to show else rawTitle to ""
         }
     }
 
@@ -216,7 +211,7 @@ class NowPlayingService : Service() {
         art: Bitmap,
         isResolvedArt: Boolean,
     ) {
-        val mediaId = "$title|$subtitle|${if (isResolvedArt) "real" else "fallback"}"
+        val mediaId = "$title|$subtitle\vert{}${if (isResolvedArt) "real" else "fallback"}"
         session.setMetadata(
             MediaMetadata.Builder()
                 .putString(MediaMetadata.METADATA_KEY_MEDIA_ID, mediaId)
@@ -274,9 +269,6 @@ class NowPlayingService : Service() {
             }.getOrNull()
         }
 
-    /**
-     * Queries IMDb's public suggestion catalog using the cleaned series/movie title.
-     */
     private fun findImdbPosterUrl(titleQuery: String): String? {
         val cleaned = cleanTitleForImdb(titleQuery)
         val slug = cleaned.lowercase()
@@ -302,9 +294,6 @@ class NowPlayingService : Service() {
         return null
     }
 
-    /**
-     * Queries Stremio's official Cinemeta catalog (series + movies) for matching poster artwork.
-     */
     private fun findCinemetaPosterUrl(titleQuery: String): String? {
         val cleaned = cleanTitleForImdb(titleQuery)
         if (cleaned.isBlank()) return null
@@ -338,9 +327,6 @@ class NowPlayingService : Service() {
             .ifBlank { title.trim() }
     }
 
-    /**
-     * Uses YouTube's internal InnerTube JSON search API first, falling back to Desktop HTML search.
-     */
     private fun findYouTubeThumbnailUrl(query: String): String? {
         val videoId = findYouTubeIdViaInnertube(query) ?: findYouTubeIdViaHtml(query) ?: return null
         return "https://i.ytimg.com/vi/$videoId/hqdefault.jpg"
