@@ -46,7 +46,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.net.URL
+import java.net.URLEncoder
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -137,9 +139,9 @@ class NowPlayingService : Service() {
 
         scope.launch {
             val art = if (!np?.artUrl.isNullOrBlank()) {
-                downloadArtwork(np!!.artUrl) ?: artFor(appName.ifBlank { title })
+                downloadArtwork(np!!.artUrl) ?: fetchCatalogArtwork(title) ?: artFor(appName.ifBlank { title })
             } else {
-                artFor(appName.ifBlank { title })
+                fetchCatalogArtwork(title) ?: artFor(appName.ifBlank { title })
             }
 
             session.setMetadata(
@@ -218,41 +220,83 @@ class NowPlayingService : Service() {
         }
     }
 
+    private suspend fun fetchCatalogArtwork(mediaTitle: String): Bitmap? = withContext(Dispatchers.IO) {
+        val cleanTitle = mediaTitle.split(" - ", " | ", " (", " [").firstOrNull()?.trim() ?: return@withContext null
+        if (cleanTitle.isBlank() || cleanTitle == "TV" || cleanTitle == "Nothing playing") return@withContext null
+        
+        try {
+            val encodedTitle = URLEncoder.encode(cleanTitle, "UTF-8")
+            val apiEndpoint = "https://omdbapi.com"
+            val responseText = URL(apiEndpoint).readText()
+            val json = JSONObject(responseText)
+            if (json.optString("Response") == "True") {
+                val posterUrl = json.optString("Poster")
+                if (!posterUrl.isNullOrBlank() && posterUrl != "N/A") {
+                    return@withContext downloadArtwork(posterUrl)
+                }
+            }
+        } catch (e: Exception) {
+            // Fallback gracefully if rate-limits or network interruptions occur
+        }
+        null
+    }
+
     private suspend fun downloadArtwork(urlString: String): Bitmap? = withContext(Dispatchers.IO) {
         artCache?.let { if (it.first == urlString) return@withContext it.second }
         try {
-            val url = URL(urlString)
-            val connection = url.openConnection().apply {
-                connectTimeout = 3000
-                readTimeout = 3000
-            }
-            val bitmap = BitmapFactory.decodeStream(connection.getInputStream())
-            if (bitmap != null) {
-                artCache = urlString to bitmap
-            }
-            bitmap
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    private fun artFor(label: String): Bitmap {
-        artCache?.let { if (it.first == label) return it.second }
-        val size = 512
-        val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bmp)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        paint.shader = LinearGradient(
-            0f, 0f, size.toFloat(), size.toFloat(),
-            0xFF5B6CFF.toInt(), 0xFFFF5FA2.toInt(), Shader.TileMode.CLAMP,
-        )
-        canvas.drawRect(0f, 0f, size.toFloat(), size.toFloat(), paint)
-        paint.shader = null
-        paint.color = Color.WHITE
-        paint.textSize = 240f
-        "com.glassremote.action.PREV"
-private const val ACTION_TOGGLE = "com.glassremote.action.TOGGLE"
-private const val ACTION_NEXT = "com.glassremote.action.NEXT"
+val url = URL(urlString)
+val connection = url.openConnection().apply {
+connectTimeout = 3000
+readTimeout = 3000
+}
+val bitmap = BitmapFactory.decodeStream(connection.getInputStream())
+if (bitmap != null) {
+artCache = urlString to bitmap
+}
+bitmap
+} catch (e: Exception) {
+null
+}
+}
+private fun artFor(label: String): Bitmap {
+artCache?.let { if (it.first == label) return it.second }
+val size = 512
+val bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+val canvas = Canvas(bmp)
+val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+paint.shader = LinearGradient(
+0f, 0f, size.toFloat(), size.toFloat(),
+0xFF5B6CFF.toInt(), 0xFFFF5FA2.toInt(), Shader.TileMode.CLAMP,
+)
+canvas.drawRect(0f, 0f, size.toFloat(), size.toFloat(), paint)
+paint.shader = null
+paint.color = Color.WHITE
+paint.textSize = 240f
+paint.textAlign = Paint.Align.CENTER
+paint.typeface = Typeface.DEFAULT_BOLD
+val letter = label.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "TV"
+canvas.drawText(letter, size / 2f, size / 2f + 85f, paint)
+artCache = label to bmp
+return bmp
+}
+private fun appLabel(pkg: String): String = when {
+pkg.isBlank() -> ""
+pkg.contains("tvmusic") -> "YouTube Music"
+pkg.contains("youtube.tv") -> "YouTube"
+pkg == "com.stremio.one" -> "Stremio"
+pkg.startsWith("com.netflix") -> "Netflix"
+pkg.contains("amazonvideo") -> "Prime Video"
+pkg.contains("spotify") -> "Spotify"
+pkg.contains("launcher") -> "Home screen"
+pkg.contains("settings") -> "Settings"
+else -> pkg.substringAfterLast('.')
+}
+companion object {
+const val CHANNEL = "tv_now_playing"
+const val NOTIF_ID = 4107
+const val ACTION_PREV = "com.glassremote.action.PREV"
+const val ACTION_TOGGLE = "com.glassremote.action.TOGGLE"
+const val ACTION_NEXT = "com.glassremote.action.NEXT"
 private const val PREFS = "lockscreen"
 fun isEnabled(ctx: Context): Boolean =
 ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("enabled", false)
