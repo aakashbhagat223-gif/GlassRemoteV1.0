@@ -70,6 +70,7 @@ import com.glassremote.ui.theme.GlassBackground
 import com.glassremote.ui.theme.Haptics
 import com.glassremote.ui.theme.LocalGlassStyle
 import com.glassremote.ui.theme.LocalHaptics
+import com.glassremote.ui.theme.ThemePreferences
 import com.glassremote.ui.theme.glass
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
@@ -85,6 +86,7 @@ class MainActivity : ComponentActivity() {
             statusBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
         )
+        ThemePreferences.init(this)
         NowPlayingService.startIfEnabled(this)
         setContent {
             val settingsVm: SettingsViewModel = hiltViewModel()
