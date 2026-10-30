@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -50,7 +51,9 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -79,6 +82,7 @@ import com.glassremote.domain.model.LinkPhase
 import com.glassremote.domain.model.RemoteStatus
 import com.glassremote.domain.model.TvDevice
 import com.glassremote.domain.repository.TvRepository
+import com.glassremote.service.NowPlayingService
 import com.glassremote.ui.theme.LocalHaptics
 import com.glassremote.ui.theme.glass
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -150,7 +154,6 @@ class DashboardViewModel @Inject constructor(
         .flowOn(Dispatchers.IO)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), NetInfo())
 
-    // ---- Backlight: ADB first (writes the TV's own setting), menu macros as the fallback ----
     private val _backlight = MutableStateFlow<Int?>(null)
     val backlight: StateFlow<Int?> = _backlight.asStateFlow()
 
@@ -518,6 +521,7 @@ private fun SpringBacklightCard(
 
 @Composable
 private fun NowPlayingCard(app: String, np: NowPlaying?, adbConnected: Boolean) {
+    val artwork by NowPlayingService.artwork.collectAsStateWithLifecycle()
     val header = when {
         np == null -> if (app.isBlank()) "NOW PLAYING" else "ON THE TV"
         np.state == 3 -> "NOW PLAYING"
@@ -536,12 +540,26 @@ private fun NowPlayingCard(app: String, np: NowPlaying?, adbConnected: Boolean) 
     Box(Modifier.fillMaxWidth().height(170.dp).glass(RoundedCornerShape(28.dp))) {
         Box(
             Modifier.align(Alignment.CenterStart).padding(16.dp).size(110.dp)
-                .blur(18.dp, BlurredEdgeTreatment.Unbounded)
-                .background(
-                    Brush.linearGradient(listOf(Color(0xFF5B6CFF), Color(0xFFFF5FA2))),
-                    RoundedCornerShape(24.dp),
+                .clip(RoundedCornerShape(20.dp))
+        ) {
+            if (artwork != null) {
+                Image(
+                    bitmap = artwork!!.asImageBitmap(),
+                    contentDescription = "Now playing artwork",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
                 )
-        )
+            } else {
+                Box(
+                    Modifier.fillMaxSize()
+                        .blur(18.dp, BlurredEdgeTreatment.Unbounded)
+                        .background(
+                            Brush.linearGradient(listOf(Color(0xFF5B6CFF), Color(0xFFFF5FA2))),
+                            RoundedCornerShape(24.dp),
+                        )
+                )
+            }
+        }
         Column(
             Modifier.align(Alignment.CenterStart).padding(start = 148.dp, end = 16.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
