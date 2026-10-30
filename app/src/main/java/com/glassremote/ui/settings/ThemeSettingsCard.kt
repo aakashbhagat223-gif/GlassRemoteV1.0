@@ -56,7 +56,7 @@ fun ThemeSettingsCard() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(12.dp))
-                        .background(if (selected) colors.accent.copy(alpha = 0.2f) else colors.surface)
+                        .background(if (selected) colors.accent.copy(alpha = 0.25f) else colors.surface)
                         .clickable {
                             ThemePreferences.save(context, style, ThemePreferences.currentMode, ThemePreferences.currentAccent)
                         }
@@ -85,7 +85,7 @@ fun ThemeSettingsCard() {
                     modifier = Modifier
                         .weight(1f)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(if (selected) colors.accent.copy(alpha = 0.2f) else colors.surface)
+                        .background(if (selected) colors.accent.copy(alpha = 0.25f) else colors.surface)
                         .clickable {
                             ThemePreferences.save(context, ThemePreferences.currentStyle, mode, ThemePreferences.currentAccent)
                         }
@@ -102,7 +102,7 @@ fun ThemeSettingsCard() {
             }
         }
 
-        // Accent Color Selector (Nothing Red, Amber, Clean White)
+        // Accent Color Selector
         Text(text = "Glyph / Accent Color", color = colors.textSecondary, fontSize = 12.sp)
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -136,7 +136,7 @@ fun ThemeSettingsCard() {
                         }
                     }
                     Text(
-                        text = accentOpt.label.substringBefore(" ("),
+                        text = accentOpt.label,
                         color = colors.textPrimary,
                         fontSize = 12.sp
                     )
