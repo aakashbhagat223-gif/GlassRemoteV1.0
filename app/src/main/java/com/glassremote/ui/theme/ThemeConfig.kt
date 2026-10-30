@@ -29,7 +29,7 @@ enum class AppThemeMode(val displayName: String) {
 }
 
 enum class AccentColorOption(val color: Color, val label: String) {
-    RED(Color(0xFFFF0000), "Red Dot"),
+    RED(Color(0xFFFF3333), "Red Dot"),
     AMBER(Color(0xFFFFB000), "Amber"),
     WHITE(Color(0xFFFFFFFF), "Clean White")
 }
@@ -78,59 +78,59 @@ fun getThemeColors(): ThemeColors {
     return when (ThemePreferences.currentStyle) {
         AppThemeStyle.NOTHING -> if (ThemePreferences.currentMode == AppThemeMode.DARK) {
             ThemeColors(
-                background = Color(0xFF000000),
-                surface = Color(0xFF111111),
+                background = Color(0xFF000000), // Deep Nothing Black
+                surface = Color(0xFF141414),
                 textPrimary = Color(0xFFFFFFFF),
-                textSecondary = Color(0xFF888888),
+                textSecondary = Color(0xFF8A8A8A),
                 accent = userAccent,
-                border = Color(0xFF333333)
+                border = Color(0xFF2C2C2C)
             )
         } else {
             ThemeColors(
-                background = Color(0xFFF4F4F4),
+                background = Color(0xFFF2F2F5),
                 surface = Color(0xFFFFFFFF),
                 textPrimary = Color(0xFF111111),
-                textSecondary = Color(0xFF666666),
+                textSecondary = Color(0xFF5E5E6E),
                 accent = userAccent,
-                border = Color(0xFFD0D0D0)
+                border = Color(0xFFD6D6DC)
             )
         }
         AppThemeStyle.RETRO -> if (ThemePreferences.currentMode == AppThemeMode.DARK) {
             ThemeColors(
-                background = Color(0xFF0A0F0A),
-                surface = Color(0xFF141F14),
-                textPrimary = Color(0xFF33FF33),
+                background = Color(0xFF0B120B), // Vintage hardware dark chassis
+                surface = Color(0xFF131F13),
+                textPrimary = Color(0xFF33FF33),  // Phosphor green
                 textSecondary = Color(0xFF1E821E),
                 accent = Color(0xFF33FF33),
                 border = Color(0xFF1E821E)
             )
         } else {
             ThemeColors(
-                background = Color(0xFFE4EDE4),
-                surface = Color(0xFFD0E0D0),
-                textPrimary = Color(0xFF0F260F),
+                background = Color(0xFFE2EAD9), // Vintage beige plastic case
+                surface = Color(0xFFCCDCC0),
+                textPrimary = Color(0xFF102810),
                 textSecondary = Color(0xFF3B6B3B),
                 accent = Color(0xFF1E6E1E),
-                border = Color(0xFF9BB39B)
+                border = Color(0xFF98B28E)
             )
         }
         AppThemeStyle.E_INK -> if (ThemePreferences.currentMode == AppThemeMode.DARK) {
             ThemeColors(
-                background = Color(0xFF121212),
-                surface = Color(0xFF1F1F1F),
-                textPrimary = Color(0xFFE0E0E0),
-                textSecondary = Color(0xFF9E9E9E),
-                accent = Color(0xFFE0E0E0),
-                border = Color(0xFF424242)
+                background = Color(0xFF181A1D), // E-reader slate dark
+                surface = Color(0xFF22262B),
+                textPrimary = Color(0xFFEFEFF1),
+                textSecondary = Color(0xFF9BA1A6),
+                accent = Color(0xFFEFEFF1),
+                border = Color(0xFF3A4046)
             )
         } else {
             ThemeColors(
-                background = Color(0xFFFFFFFF),
-                surface = Color(0xFFF0F0F0),
-                textPrimary = Color(0xFF111111),
-                textSecondary = Color(0xFF555555),
-                accent = Color(0xFF111111),
-                border = Color(0xFFCCCCCC)
+                background = Color(0xFFFBFBFA), // Warm paper white
+                surface = Color(0xFFFFFFFF),
+                textPrimary = Color(0xFF1A1C1E),  // Deep ink black
+                textSecondary = Color(0xFF5A6066),
+                accent = Color(0xFF1A1C1E),
+                border = Color(0xFFD8DCDE)
             )
         }
         AppThemeStyle.GLASS -> if (ThemePreferences.currentMode == AppThemeMode.DARK) {
@@ -169,19 +169,19 @@ fun GlassBackground(content: @Composable BoxScope.() -> Unit) {
 fun Modifier.glass(shape: RoundedCornerShape, strong: Boolean = false): Modifier {
     val colors = when (ThemePreferences.currentStyle) {
         AppThemeStyle.NOTHING -> if (ThemePreferences.currentMode == AppThemeMode.DARK) {
-            ThemeColors(Color(0xFF000000), Color(0xFF121212), Color(0xFFFFFFFF), Color(0xFF888888), ThemePreferences.currentAccent.color, Color(0xFF333333))
+            ThemeColors(Color(0xFF000000), Color(0xFF141414), Color(0xFFFFFFFF), Color(0xFF8A8A8A), ThemePreferences.currentAccent.color, Color(0xFF2C2C2C))
         } else {
-            ThemeColors(Color(0xFFF4F4F4), Color(0xFFFFFFFF), Color(0xFF111111), Color(0xFF666666), ThemePreferences.currentAccent.color, Color(0xFFD0D0D0))
+            ThemeColors(Color(0xFFF2F2F5), Color(0xFFFFFFFF), Color(0xFF111111), Color(0xFF5E5E6E), ThemePreferences.currentAccent.color, Color(0xFFD6D6DC))
         }
         AppThemeStyle.RETRO -> if (ThemePreferences.currentMode == AppThemeMode.DARK) {
-            ThemeColors(Color(0xFF0A0F0A), Color(0xFF141F14), Color(0xFF33FF33), Color(0xFF1E821E), Color(0xFF33FF33), Color(0xFF1E821E))
+            ThemeColors(Color(0xFF0B120B), Color(0xFF131F13), Color(0xFF33FF33), Color(0xFF1E821E), Color(0xFF33FF33), Color(0xFF1E821E))
         } else {
-            ThemeColors(Color(0xFFE4EDE4), Color(0xFFD0E0D0), Color(0xFF0F260F), Color(0xFF3B6B3B), Color(0xFF1E6E1E), Color(0xFF9BB39B))
+            ThemeColors(Color(0xFFE2EAD9), Color(0xFFCCDCC0), Color(0xFF102810), Color(0xFF3B6B3B), Color(0xFF1E6E1E), Color(0xFF98B28E))
         }
         AppThemeStyle.E_INK -> if (ThemePreferences.currentMode == AppThemeMode.DARK) {
-            ThemeColors(Color(0xFF121212), Color(0xFF1F1F1F), Color(0xFFE0E0E0), Color(0xFF9E9E9E), Color(0xFFE0E0E0), Color(0xFF424242))
+            ThemeColors(Color(0xFF181A1D), Color(0xFF22262B), Color(0xFFEFEFF1), Color(0xFF9BA1A6), Color(0xFFEFEFF1), Color(0xFF3A4046))
         } else {
-            ThemeColors(Color(0xFFFFFFFF), Color(0xFFF0F0F0), Color(0xFF111111), Color(0xFF555555), Color(0xFF111111), Color(0xFFCCCCCC))
+            ThemeColors(Color(0xFFFBFBFA), Color(0xFFFFFFFF), Color(0xFF1A1C1E), Color(0xFF5A6066), Color(0xFF1A1C1E), Color(0xFFD8DCDE))
         }
         AppThemeStyle.GLASS -> if (ThemePreferences.currentMode == AppThemeMode.DARK) {
             ThemeColors(Color(0xFF0A0A12), if (strong) Color(0x33FFFFFF) else Color(0x1AFFFFFF), Color(0xFFFFFFFF), Color(0x88FFFFFF), ThemePreferences.currentAccent.color, Color(0x33FFFFFF))
