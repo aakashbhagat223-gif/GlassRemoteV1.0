@@ -84,6 +84,7 @@ import com.glassremote.domain.model.TvDevice
 import com.glassremote.domain.repository.TvRepository
 import com.glassremote.service.NowPlayingService
 import com.glassremote.ui.theme.LocalHaptics
+import com.glassremote.ui.theme.getThemeColors
 import com.glassremote.ui.theme.glass
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -286,6 +287,7 @@ fun DashboardScreen(vm: DashboardViewModel = hiltViewModel()) {
     val adbState by vm.adbState.collectAsStateWithLifecycle()
     val backlight by vm.backlight.collectAsStateWithLifecycle()
     val ctx = LocalContext.current
+    val colors = getThemeColors()
 
     LaunchedEffect(adbState.connected) { vm.refreshBacklight() }
 
@@ -307,7 +309,7 @@ fun DashboardScreen(vm: DashboardViewModel = hiltViewModel()) {
             .padding(horizontal = 20.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Text("Dashboard", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+        Text("Dashboard", color = colors.textPrimary, fontSize = 28.sp, fontWeight = FontWeight.Bold)
         NowPlayingCard(appLabel(currentApp), nowPlaying, adbState.connected)
 
         TvInfoCard(
@@ -367,13 +369,14 @@ private fun TvInfoCard(
     adb: AdbState,
     phoneIp: String?,
 ) {
+    val colors = getThemeColors()
     Column(
         Modifier.fillMaxWidth().glass(RoundedCornerShape(24.dp)).padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(
             "Xiaomi TV · " + name.ifBlank { "not paired" },
-            color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+            color = colors.textPrimary, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
         )
         Line("TV IP", host.ifBlank { "—" })
         Line("Latency", ping?.let { "$it ms" } ?: "—")
@@ -394,11 +397,12 @@ private fun TvInfoCard(
 
 @Composable
 private fun Line(label: String, value: String) {
+    val colors = getThemeColors()
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, color = Color.White.copy(alpha = 0.55f), fontSize = 13.sp)
+        Text(label, color = colors.textSecondary, fontSize = 13.sp)
         Text(
             value,
-            color = Color.White,
+            color = colors.textPrimary,
             fontSize = 13.sp,
             fontWeight = FontWeight.Medium,
             textAlign = TextAlign.End,
@@ -415,6 +419,7 @@ private fun SpringBacklightCard(
     onRelease: () -> Unit,
 ) {
     val haptics = LocalHaptics.current
+    val colors = getThemeColors()
     val deflection = remember { Animatable(0f) }
     var dragging by remember { mutableStateOf(false) }
     var trackWidthPx by remember { mutableFloatStateOf(0f) }
@@ -467,20 +472,20 @@ private fun SpringBacklightCard(
     ) {
         Text(
             if (backlight != null) "TV backlight · $backlight" else "TV backlight",
-            color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp,
+            color = colors.textSecondary, fontSize = 12.sp,
         )
         Row(
             Modifier.fillMaxWidth().height(52.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text("−", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Medium)
+            Text("−", color = colors.textPrimary, fontSize = 26.sp, fontWeight = FontWeight.Medium)
             Box(
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
                     .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.10f))
+                    .background(colors.accent.copy(alpha = 0.15f))
                     .onSizeChanged { trackWidthPx = it.width.toFloat() }
                     .pointerInput(Unit) {
                         detectHorizontalDragGestures(
@@ -501,20 +506,20 @@ private fun SpringBacklightCard(
                     },
                 contentAlignment = Alignment.Center,
             ) {
-                Box(Modifier.width(2.dp).height(22.dp).background(Color.White.copy(alpha = 0.35f)))
+                Box(Modifier.width(2.dp).height(22.dp).background(colors.accent.copy(alpha = 0.5f)))
                 Box(
                     Modifier
                         .offset { IntOffset((deflection.value * ((trackWidthPx - thumbPx) / 2f)).roundToInt(), 0) }
                         .size(thumb)
-                        .background(Color.White.copy(alpha = 0.92f), CircleShape)
+                        .background(colors.textPrimary, CircleShape)
                 )
             }
-            Text("+", color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Medium)
+            Text("+", color = colors.textPrimary, fontSize = 26.sp, fontWeight = FontWeight.Medium)
         }
         Text(
             "Drag right for brighter, left for dimmer; further is faster. It springs back on release. " +
                 "With ADB it sets the TV's backlight value directly.",
-            color = Color.White.copy(alpha = 0.45f), fontSize = 11.sp,
+            color = colors.textSecondary, fontSize = 11.sp,
         )
     }
 }
@@ -522,6 +527,7 @@ private fun SpringBacklightCard(
 @Composable
 private fun NowPlayingCard(app: String, np: NowPlaying?, adbConnected: Boolean) {
     val artwork by NowPlayingService.artwork.collectAsStateWithLifecycle()
+    val colors = getThemeColors()
     val header = when {
         np == null -> if (app.isBlank()) "NOW PLAYING" else "ON THE TV"
         np.state == 3 -> "NOW PLAYING"
@@ -554,7 +560,7 @@ private fun NowPlayingCard(app: String, np: NowPlaying?, adbConnected: Boolean) 
                     Modifier.fillMaxSize()
                         .blur(18.dp, BlurredEdgeTreatment.Unbounded)
                         .background(
-                            Brush.linearGradient(listOf(Color(0xFF5B6CFF), Color(0xFFFF5FA2))),
+                            Brush.linearGradient(listOf(colors.accent, colors.textSecondary)),
                             RoundedCornerShape(24.dp),
                         )
                 )
@@ -564,12 +570,12 @@ private fun NowPlayingCard(app: String, np: NowPlaying?, adbConnected: Boolean) 
             Modifier.align(Alignment.CenterStart).padding(start = 148.dp, end = 16.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Text(header, color = Color.White.copy(alpha = 0.5f), fontSize = 11.sp)
+            Text(header, color = colors.textSecondary, fontSize = 11.sp)
             Text(
                 title,
-                color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 2,
+                color = colors.textPrimary, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, maxLines = 2,
             )
-            Text(sub, color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp, maxLines = 1)
+            Text(sub, color = colors.textSecondary, fontSize = 12.sp, maxLines = 1)
         }
     }
 }
@@ -582,6 +588,7 @@ private fun StatTile(
     dot: Color? = null,
     onClick: (() -> Unit)? = null,
 ) {
+    val colors = getThemeColors()
     Column(
         modifier
             .height(92.dp)
@@ -590,13 +597,13 @@ private fun StatTile(
             .padding(16.dp),
         verticalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(label, color = Color.White.copy(alpha = 0.55f), fontSize = 12.sp)
+        Text(label, color = colors.textSecondary, fontSize = 12.sp)
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (dot != null) {
                 Box(Modifier.size(8.dp).background(dot, CircleShape))
                 Spacer(Modifier.width(8.dp))
             }
-            Text(value, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text(value, color = colors.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
         }
     }
 }
