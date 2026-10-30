@@ -549,6 +549,20 @@ private fun NowPlayingCard(app: String, np: NowPlaying?, adbConnected: Boolean) 
                 .clip(RoundedCornerShape(20.dp))
         ) {
             if (artwork != null) {
+                // Soft glass-like haze / frosted blur background layer behind the thumbnail
+                Box(
+                    Modifier.fillMaxSize()
+                        .blur(16.dp, BlurredEdgeTreatment.Unbounded)
+                        .background(colors.accent.copy(alpha = 0.35f))
+                ) {
+                    Image(
+                        bitmap = artwork!!.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+                // Crisp foreground thumbnail
                 Image(
                     bitmap = artwork!!.asImageBitmap(),
                     contentDescription = "Now playing artwork",
@@ -603,7 +617,7 @@ private fun StatTile(
                 Box(Modifier.size(8.dp).background(dot, CircleShape))
                 Spacer(Modifier.width(8.dp))
             }
-            Text(value, color = colors.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text(value, color = colors.textPrimary, fontSize.let { 17.sp }, fontWeight = FontWeight.SemiBold, maxLines = 1)
         }
     }
 }
