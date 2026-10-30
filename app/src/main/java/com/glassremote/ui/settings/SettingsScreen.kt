@@ -101,6 +101,9 @@ fun SettingsScreen(vm: SettingsViewModel) {
     ) {
         Text("Settings", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
 
+        // Theme and Aesthetic Selection Card
+        ThemeSettingsCard()
+
         // Live preview: reflects text size, weight and corner radius immediately.
         Column(
             Modifier.fillMaxWidth().glass(RoundedCornerShape(28.dp)).padding(20.dp),
