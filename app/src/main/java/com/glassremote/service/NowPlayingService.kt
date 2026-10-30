@@ -11,6 +11,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
@@ -44,6 +45,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.net.URL
 import javax.inject.Inject
 
 /**
@@ -115,11 +118,11 @@ class NowPlayingService : Service() {
                 adb.state,
                 ImeBridge.state.map { it.currentApp }.distinctUntilChanged(),
             ) { np, a, app -> Triple(np, a.connected, app) }
-                .collect { (np, adbOn, app) -> render(np, adbOn, app) }
+                .collect { (np, adbOn, app) -> processMediaState(np, adbOn, app) }
         }
     }
 
-    private fun render(np: NowPlaying?, adbOn: Boolean, app: String) {
+    private fun processMediaState(np: NowPlaying?, adbOn: Boolean, app: String) {
         val appName = appLabel(np?.pkg ?: app)
         val title = when {
             np != null -> np.title.ifBlank { appName.ifBlank { "TV" } }
@@ -132,35 +135,42 @@ class NowPlayingService : Service() {
             else -> "Connect ADB in the app for titles"
         }
         val playing = np?.state == 3
-        val key = "$title|$subtitle|$playing"
+        val key = "$title|$subtitle|$playing|${np?.artUrl}"
         if (key == lastKey) return
         lastKey = key
 
-        val art = artFor(appName.ifBlank { title })
-        session.setMetadata(
-            MediaMetadata.Builder()
-                .putString(MediaMetadata.METADATA_KEY_TITLE, title)
-                .putString(MediaMetadata.METADATA_KEY_ARTIST, subtitle)
-                .putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art)
-                .putBitmap(MediaMetadata.METADATA_KEY_ART, art)
-                .build()
-        )
-        session.setPlaybackState(
-            PlaybackState.Builder()
-                .setActions(
-                    PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
-                        PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SKIP_TO_NEXT or
-                        PlaybackState.ACTION_SKIP_TO_PREVIOUS
-                )
-                .setState(
-                    if (playing) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED,
-                    PlaybackState.PLAYBACK_POSITION_UNKNOWN,
-                    1f,
-                )
-                .build()
-        )
-        getSystemService(NotificationManager::class.java)
-            .notify(NOTIF_ID, buildNotification(title, subtitle, playing, art))
+        scope.launch {
+            val art = if (!np?.artUrl.isNullOrBlank()) {
+                downloadArtwork(np!!.artUrl) ?: artFor(appName.ifBlank { title })
+            } else {
+                artFor(appName.ifBlank { title })
+            }
+
+            session.setMetadata(
+                MediaMetadata.Builder()
+                    .putString(MediaMetadata.METADATA_KEY_TITLE, title)
+                    .putString(MediaMetadata.METADATA_KEY_ARTIST, subtitle)
+                    .putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART, art)
+                    .putBitmap(MediaMetadata.METADATA_KEY_ART, art)
+                    .build()
+            )
+            session.setPlaybackState(
+                PlaybackState.Builder()
+                    .setActions(
+                        PlaybackState.ACTION_PLAY or PlaybackState.ACTION_PAUSE or
+                            PlaybackState.ACTION_PLAY_PAUSE or PlaybackState.ACTION_SKIP_TO_NEXT or
+                            PlaybackState.ACTION_SKIP_TO_PREVIOUS
+                    )
+                    .setState(
+                        if (playing) PlaybackState.STATE_PLAYING else PlaybackState.STATE_PAUSED,
+                        PlaybackState.PLAYBACK_POSITION_UNKNOWN,
+                        1f,
+                    )
+                    .build()
+            )
+            getSystemService(NotificationManager::class.java)
+                .notify(NOTIF_ID, buildNotification(title, subtitle, playing, art))
+        }
     }
 
     private fun buildNotification(title: String, subtitle: String, playing: Boolean, art: Bitmap): Notification {
@@ -204,7 +214,6 @@ class NowPlayingService : Service() {
         return Notification.Action.Builder(Icon.createWithResource(this, iconRes), label, pi).build()
     }
 
-    /** Media keys go to the TV over ADB; the repository falls back to the remote link otherwise. */
     private fun media(code: Int) {
         scope.launch {
             runCatching {
@@ -213,7 +222,24 @@ class NowPlayingService : Service() {
         }
     }
 
-    /** Generated artwork: gradient with the app's first letter (the TV doesn't share real artwork). */
+    private suspend fun downloadArtwork(urlString: String): Bitmap? = withContext(Dispatchers.IO) {
+        artCache?.let { if (it.first == urlString) return@withContext it.second }
+        try {
+            val url = URL(urlString)
+            val connection = url.openConnection().apply {
+                connectTimeout = 3000
+                readTimeout = 3000
+            }
+            val bitmap = BitmapFactory.decodeStream(connection.getInputStream())
+            if (bitmap != null) {
+                artCache = urlString to bitmap
+            }
+            bitmap
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     private fun artFor(label: String): Bitmap {
         artCache?.let { if (it.first == label) return it.second }
         val size = 512
@@ -224,62 +250,35 @@ class NowPlayingService : Service() {
             0f, 0f, size.toFloat(), size.toFloat(),
             0xFF5B6CFF.toInt(), 0xFFFF5FA2.toInt(), Shader.TileMode.CLAMP,
         )
-        canvas.drawRect(0f, 0f, size.toFloat(), size.toFloat(), paint)
-        paint.shader = null
-        paint.color = Color.WHITE
-        paint.textSize = 240f
-        paint.textAlign = Paint.Align.CENTER
-        paint.typeface = Typeface.DEFAULT_BOLD
-        val letter = label.firstOrNull { it.isLetterOrDigit() }?.uppercaseChar()?.toString() ?: "TV"
-        canvas.drawText(letter, size / 2f, size / 2f + 85f, paint)
-        artCache = label to bmp
-        return bmp
-    }
-
-    private fun appLabel(pkg: String): String = when {
-        pkg.isBlank() -> ""
-        pkg.contains("tvmusic") -> "YouTube Music"
-        pkg.contains("youtube.tv") -> "YouTube"
-        pkg == "com.stremio.one" -> "Stremio"
-        pkg.startsWith("com.netflix") -> "Netflix"
-        pkg.contains("amazonvideo") -> "Prime Video"
-        pkg.contains("spotify") -> "Spotify"
         pkg.contains("launcher") -> "Home screen"
-        pkg.contains("settings") -> "Settings"
-        else -> pkg.substringAfterLast('.')
-    }
-
-    companion object {
-        private const val CHANNEL = "tv_now_playing"
-        private const val NOTIF_ID = 4107
-        private const val ACTION_PREV = "com.glassremote.action.PREV"
-        private const val ACTION_TOGGLE = "com.glassremote.action.TOGGLE"
-        private const val ACTION_NEXT = "com.glassremote.action.NEXT"
-        private const val PREFS = "lockscreen"
-
-        fun isEnabled(ctx: Context): Boolean =
-            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("enabled", false)
-
-        fun notificationsAllowed(ctx: Context): Boolean =
-            Build.VERSION.SDK_INT < 33 ||
-                ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) ==
-                PackageManager.PERMISSION_GRANTED
-
-        fun setEnabled(ctx: Context, on: Boolean) {
-            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("enabled", on).apply()
-            if (on) start(ctx) else stop(ctx)
-        }
-
-        fun start(ctx: Context) {
-            ContextCompat.startForegroundService(ctx, Intent(ctx, NowPlayingService::class.java))
-        }
-
-        fun stop(ctx: Context) {
-            ctx.stopService(Intent(ctx, NowPlayingService::class.java))
-        }
-
-        fun startIfEnabled(ctx: Context) {
-            if (isEnabled(ctx) && notificationsAllowed(ctx)) start(ctx)
-        }
-    }
+pkg.contains("settings") -> "Settings"
+else -> pkg.substringAfterLast('.')
+}
+companion object {
+private const val CHANNEL = "tv_now_playing"
+private const val NOTIF_ID = 4107
+private const val ACTION_PREV = "com.glassremote.action.PREV"
+private const val ACTION_TOGGLE = "com.glassremote.action.TOGGLE"
+private const val ACTION_NEXT = "com.glassremote.action.NEXT"
+private const val PREFS = "lockscreen"
+fun isEnabled(ctx: Context): Boolean =
+ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("enabled", false)
+fun notificationsAllowed(ctx: Context): Boolean =
+Build.VERSION.SDK_INT < 33 ||
+ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS) ==
+PackageManager.PERMISSION_GRANTED
+fun setEnabled(ctx: Context, on: Boolean) {
+ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("enabled", on).apply()
+if (on) start(ctx) else stop(ctx)
+}
+fun start(ctx: Context) {
+ContextCompat.startForegroundService(ctx, Intent(ctx, NowPlayingService::class.java))
+}
+fun stop(ctx: Context) {
+ctx.stopService(Intent(ctx, NowPlayingService::class.java))
+}
+fun startIfEnabled(ctx: Context) {
+if (isEnabled(ctx) && notificationsAllowed(ctx)) start(ctx)
+}
+}
 }
