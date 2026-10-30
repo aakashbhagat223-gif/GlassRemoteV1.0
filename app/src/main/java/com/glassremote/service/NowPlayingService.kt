@@ -60,7 +60,7 @@ import javax.inject.Inject
 /**
  * Shows what the TV is playing as a media card on the phone's lock screen (and the notification shade).
  * Fetches real thumbnails/posters from Stremio Cinemeta, IMDb, YouTube, and iTunes.
- * Includes quick notification controls for Mute and Power.
+ * Includes quick notification controls for Mute, Power, Previous, Play/Pause, and Next.
  */
 @AndroidEntryPoint
 class NowPlayingService : Service() {
@@ -524,6 +524,7 @@ class NowPlayingService : Service() {
     companion object {
         private const val CHANNEL = "tv_now_playing"
         private const val NOTIF_ID = 4107
+        private const val PREFS = "lockscreen"
         private const val ACTION_PREV = "com.glassremote.action.PREV"
         private const val ACTION_TOGGLE = "com.glassremote.action.TOGGLE"
         private const val ACTION_NEXT = "com.glassremote.action.NEXT"
@@ -560,4 +561,4 @@ class NowPlayingService : Service() {
             if (isEnabled(ctx) && notificationsAllowed(ctx)) start(ctx)
         }
     }
-}
+                           }
