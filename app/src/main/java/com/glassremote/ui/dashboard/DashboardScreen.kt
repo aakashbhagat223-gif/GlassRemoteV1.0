@@ -617,7 +617,7 @@ private fun StatTile(
                 Box(Modifier.size(8.dp).background(dot, CircleShape))
                 Spacer(Modifier.width(8.dp))
             }
-            Text(value, color = colors.textPrimary, fontSize.let { 17.sp }, fontWeight = FontWeight.SemiBold, maxLines = 1)
+            Text(value, color = colors.textPrimary, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
         }
     }
 }
