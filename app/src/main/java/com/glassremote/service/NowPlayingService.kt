@@ -60,6 +60,7 @@ import javax.inject.Inject
 /**
  * Shows what the TV is playing as a media card on the phone's lock screen (and the notification shade).
  * Fetches real thumbnails/posters from Stremio Cinemeta, IMDb, YouTube, and iTunes.
+ * Includes quick notification controls for Mute and Power.
  */
 @AndroidEntryPoint
 class NowPlayingService : Service() {
@@ -105,6 +106,8 @@ class NowPlayingService : Service() {
             ACTION_PREV -> media(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
             ACTION_TOGGLE -> media(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
             ACTION_NEXT -> media(KeyEvent.KEYCODE_MEDIA_NEXT)
+            ACTION_MUTE -> media(KeyEvent.KEYCODE_VOLUME_MUTE)
+            ACTION_POWER -> media(KeyEvent.KEYCODE_POWER)
         }
         if (!started) {
             started = true
@@ -254,18 +257,13 @@ class NowPlayingService : Service() {
                         findYouTubeThumbnailUrl(mainTitle),
                         findImdbPosterUrl(mainTitle),
                     )
-                    else -> {
-                        // For Stremio/Netflix/Prime: extraSubtitle is the Series Name (e.g., "Suits")
-                        // and mainTitle is the Episode Name (e.g., "Errors and Omissions").
-                        // Search Cinemeta and IMDb using the Series Name first!
-                        listOfNotNull(
-                            findCinemetaPosterUrl(extraSubtitle),
-                            findImdbPosterUrl(extraSubtitle),
-                            findCinemetaPosterUrl(mainTitle),
-                            findImdbPosterUrl(mainTitle),
-                            findYouTubeThumbnailUrl(rawTitle),
-                        )
-                    }
+                    else -> listOfNotNull(
+                        findCinemetaPosterUrl(extraSubtitle),
+                        findImdbPosterUrl(extraSubtitle),
+                        findCinemetaPosterUrl(mainTitle),
+                        findImdbPosterUrl(mainTitle),
+                        findYouTubeThumbnailUrl(rawTitle),
+                    )
                 }
                 for (url in urls.distinct()) {
                     val bmp = downloadBitmap(url)
@@ -452,6 +450,7 @@ class NowPlayingService : Service() {
             .setVisibility(Notification.VISIBILITY_PUBLIC)
             .setOngoing(true)
             .setShowWhen(false)
+            .addAction(action(android.R.drawable.ic_lock_silent_mode, "Mute", ACTION_MUTE))
             .addAction(action(android.R.drawable.ic_media_previous, "Previous", ACTION_PREV))
             .addAction(
                 action(
@@ -461,10 +460,11 @@ class NowPlayingService : Service() {
                 )
             )
             .addAction(action(android.R.drawable.ic_media_next, "Next", ACTION_NEXT))
+            .addAction(action(android.R.drawable.ic_lock_power_off, "Power", ACTION_POWER))
             .setStyle(
                 Notification.MediaStyle()
                     .setMediaSession(session.sessionToken)
-                    .setShowActionsInCompactView(0, 1, 2)
+                    .setShowActionsInCompactView(1, 2, 3)
             )
             .build()
     }
@@ -477,7 +477,8 @@ class NowPlayingService : Service() {
         )
         return Notification.Action.Builder(Icon.createWithResource(this, iconRes), label, pi).build()
     }
-        private fun media(code: Int) {
+
+    private fun media(code: Int) {
         scope.launch {
             runCatching {
                 if (adb.state.value.connected) actions.keyEvent(code) else repo.sendKey(code, KeyDirection.Short)
@@ -526,7 +527,8 @@ class NowPlayingService : Service() {
         private const val ACTION_PREV = "com.glassremote.action.PREV"
         private const val ACTION_TOGGLE = "com.glassremote.action.TOGGLE"
         private const val ACTION_NEXT = "com.glassremote.action.NEXT"
-        private const val PREFS = "lockscreen"
+        private const val ACTION_MUTE = "com.glassremote.action.MUTE"
+        private const val ACTION_POWER = "com.glassremote.action.POWER"
         private const val DESKTOP_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 
@@ -558,4 +560,4 @@ class NowPlayingService : Service() {
             if (isEnabled(ctx) && notificationsAllowed(ctx)) start(ctx)
         }
     }
-                           }
+}
