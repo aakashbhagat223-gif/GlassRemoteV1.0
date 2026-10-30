@@ -1,10 +1,6 @@
 package com.glassremote.ui.link
 
 import android.Manifest
-import android.bluetooth.BluetoothAdapter
-import android.content.Context
-import android.content.Intent
-import android.net.ConnectivityManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -55,41 +51,24 @@ import androidx.lifecycle.viewModelScope
 import com.glassremote.data.adb.AdbManager
 import com.glassremote.data.adb.NativeActions
 import com.glassremote.data.adb.TvInput
-import com.glassremote.data.bluetooth.BluetoothHidController
 import com.glassremote.data.repository.PairedDeviceStore
 import com.glassremote.domain.model.TvDevice
+import com.glassremote.service.NowPlayingService
 import com.glassremote.ui.theme.glass
 import dagger.hilt.android.lifecycle.HiltViewModel
-import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Semaphore
-import kotlinx.coroutines.sync.withPermit
-import kotlinx.coroutines.withContext
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.Inet4Address
-import java.net.InetSocketAddress
-import java.net.Socket
-import java.net.URL
 import javax.inject.Inject
 
 @HiltViewModel
 class LinkViewModel @Inject constructor(
-    val bt: BluetoothHidController,
     val adb: AdbManager,
     private val actions: NativeActions,
-    private val store: PairedDeviceStore,
-    @ApplicationContext private val ctx: Context,
+    store: PairedDeviceStore,
 ) : ViewModel() {
 
     val device: StateFlow<TvDevice?> = store.lastDevice
@@ -104,24 +83,18 @@ class LinkViewModel @Inject constructor(
     private val _hdmi2 = MutableStateFlow("")
     val hdmi2: StateFlow<String> = _hdmi2.asStateFlow()
 
-    private val _btDevices = MutableStateFlow<List<Pair<String, String>>>(emptyList())
-    val btDevices: StateFlow<List<Pair<String, String>>> = _btDevices.asStateFlow()
-
-    private val _scan = MutableStateFlow<List<String>>(emptyList())
-    val scan: StateFlow<List<String>> = _scan.asStateFlow()
-
-    private val _scanning = MutableStateFlow(false)
-    val scanning: StateFlow<Boolean> = _scanning.asStateFlow()
-
     private val _nativeBacklight = MutableStateFlow(true)
     val nativeBacklight: StateFlow<Boolean> = _nativeBacklight.asStateFlow()
+
+    private val _keysViaAdb = MutableStateFlow(false)
+    val keysViaAdb: StateFlow<Boolean> = _keysViaAdb.asStateFlow()
 
     init {
         viewModelScope.launch {
             _hdmi2.value = actions.savedHdmi2()
             _nativeBacklight.value = actions.nativeBacklightEnabled()
+            _keysViaAdb.value = actions.keysViaAdb()
         }
-        refreshBt()
     }
 
     fun setNativeBacklight(on: Boolean) {
@@ -131,15 +104,11 @@ class LinkViewModel @Inject constructor(
         }
     }
 
-    fun refreshBt() { _btDevices.value = bt.bondedInfo() }
-
-    fun restartBt() {
-        viewModelScope.launch(Dispatchers.IO) { bt.restart() }
-        refreshBt()
-    }
-
-    fun connectBt(address: String) {
-        viewModelScope.launch(Dispatchers.IO) { bt.connectTo(address) }
+    fun setKeysViaAdb(on: Boolean) {
+        viewModelScope.launch {
+            actions.setKeysViaAdb(on)
+            _keysViaAdb.value = on
+        }
     }
 
     fun connectAdb(host: String, port: Int) {
@@ -157,7 +126,7 @@ class LinkViewModel @Inject constructor(
         }
     }
 
-    fun testAdb() = run("Testing") { actions.let { adb.shell("getprop ro.product.model") } }
+    fun testAdb() = run("Testing") { adb.shell("getprop ro.product.model") }
 
     fun launchStremio() = run("Launching Stremio") { actions.launchPackage("com.stremio.one") }
 
@@ -186,89 +155,27 @@ class LinkViewModel @Inject constructor(
     fun probeBacklight() = run("Searching settings") {
         actions.backlightSettings().joinToString("\n").ifBlank { "No matching settings found" }
     }
-
-    fun scanNetwork() {
-        if (_scanning.value) return
-        viewModelScope.launch {
-            _scanning.value = true
-            _scan.value = emptyList()
-            _scan.value = withContext(Dispatchers.IO) { scanSubnet() }
-            _scanning.value = false
-        }
-    }
-
-    private fun castName(host: String): String? = try {
-        val c = URL("http://$host:8008/setup/eureka_info?params=name").openConnection() as HttpURLConnection
-        c.connectTimeout = 1_500
-        c.readTimeout = 1_500
-        try {
-            JSONObject(c.inputStream.bufferedReader().readText()).optString("name").ifBlank { null }
-        } finally {
-            c.disconnect()
-        }
-    } catch (_: Exception) {
-        null
-    }
-
-    /** Probes the phone's /24 for remote (6466), ADB (5555) and Cast (8009/8008) ports. */
-    private suspend fun scanSubnet(): List<String> = coroutineScope {
-        val cm = ctx.getSystemService(ConnectivityManager::class.java)
-        val ip = cm.getLinkProperties(cm.activeNetwork)?.linkAddresses
-            ?.firstOrNull { it.address is Inet4Address }?.address?.hostAddress
-            ?: return@coroutineScope emptyList()
-        val prefix = ip.substringBeforeLast('.')
-        val tvHost = store.lastDevice.first()?.host
-        val ports = listOf(6466, 5555, 8009, 8008)
-        val gate = Semaphore(40)
-        (1..254).map { n ->
-            async {
-                gate.withPermit {
-                    val host = "$prefix.$n"
-                    if (host == ip) return@withPermit null
-                    val open = ports.filter { p ->
-                        runCatching {
-                            Socket().use { it.connect(InetSocketAddress(host, p), 700) }
-                            true
-                        }.getOrDefault(false)
-                    }
-                    if (open.isEmpty()) {
-                        null
-                    } else {
-                        val name = if (8008 in open) castName(host) else null
-                        buildString {
-                            append(host).append("  ports ").append(open.joinToString())
-                            if (name != null) append("  ·  ").append(name)
-                            if (host == tvHost) append("  (your TV)")
-                        }
-                    }
-                }
-            }
-        }.awaitAll().filterNotNull()
-    }
 }
 
 @Composable
 fun LinkScreen(vm: LinkViewModel = hiltViewModel()) {
     val ctx = LocalContext.current
-    val btState by vm.bt.state.collectAsStateWithLifecycle()
-    val prefer by vm.bt.prefer.collectAsStateWithLifecycle()
     val adbState by vm.adb.state.collectAsStateWithLifecycle()
     val device by vm.device.collectAsStateWithLifecycle()
-    val btDevices by vm.btDevices.collectAsStateWithLifecycle()
     val output by vm.output.collectAsStateWithLifecycle()
     val inputs by vm.inputs.collectAsStateWithLifecycle()
     val hdmi2 by vm.hdmi2.collectAsStateWithLifecycle()
-    val scan by vm.scan.collectAsStateWithLifecycle()
-    val scanning by vm.scanning.collectAsStateWithLifecycle()
     val nativeBacklight by vm.nativeBacklight.collectAsStateWithLifecycle()
+    val keysViaAdb by vm.keysViaAdb.collectAsStateWithLifecycle()
 
     var host by remember(device) { mutableStateOf(device?.host ?: "") }
     var port by remember { mutableStateOf("5555") }
+    var lockOn by remember { mutableStateOf(NowPlayingService.isEnabled(ctx)) }
 
-    val askBt = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+    val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
-            vm.bt.start()
-            vm.refreshBt()
+            NowPlayingService.setEnabled(ctx, true)
+            lockOn = true
         }
     }
 
@@ -282,53 +189,7 @@ fun LinkScreen(vm: LinkViewModel = hiltViewModel()) {
     ) {
         Text("Link", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold)
 
-        Section("Bluetooth backup") {
-            Text(
-                (btState.connectedName?.let { "Connected to $it" } ?: "Not connected") + " · " + btState.message,
-                color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp,
-            )
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Switch(checked = prefer, onCheckedChange = { vm.bt.setPrefer(it) })
-                Text("Send keys over Bluetooth when connected", color = Color.White, fontSize = 13.sp)
-            }
-            Row {
-                LinkButton("Enable") {
-                    if (Build.VERSION.SDK_INT >= 31 && !vm.bt.hasPermission()) {
-                        askBt.launch(Manifest.permission.BLUETOOTH_CONNECT)
-                    } else {
-                        vm.bt.start()
-                        vm.refreshBt()
-                    }
-                }
-                LinkButton("Re-register") { vm.restartBt() }
-                LinkButton("Discoverable") {
-                    ctx.startActivity(
-                        Intent(BluetoothAdapter.ACTION_REQUEST_DISCOVERABLE)
-                            .putExtra(BluetoothAdapter.EXTRA_DISCOVERABLE_DURATION, 180)
-                    )
-                }
-                LinkButton("Refresh") { vm.refreshBt() }
-            }
-            InfoToggle(
-                "Setup: tap Enable until the message says Registered. Then tap Discoverable and, on the " +
-                    "TV, go to Settings → Remotes & accessories → Add accessory and pick this phone. " +
-                    "Back here, tap the TV (or the Jio box) in the list to connect. With the switch on, the " +
-                    "Remote tab sends keys to whichever device is connected over Bluetooth, which is how " +
-                    "you can drive the Jio box."
-            )
-            btDevices.forEach { (name, address) ->
-                Text(
-                    if (btState.connectedName == name) "$name  ✓" else name,
-                    color = Color.White, fontSize = 14.sp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { vm.connectBt(address) }
-                        .padding(vertical = 8.dp),
-                )
-            }
-        }
-
-        Section("ADB (native actions, typing, Now Playing)") {
+        Section("ADB (primary control channel)") {
             Text(adbState.message, color = Color.White.copy(alpha = 0.7f), fontSize = 13.sp)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
@@ -349,11 +210,21 @@ fun LinkScreen(vm: LinkViewModel = hiltViewModel()) {
             InfoToggle(
                 "Turn on USB debugging in the TV's Developer options first. Accept the prompt on the TV " +
                     "and tick Always allow. Once connected it reconnects by itself (also if the TV's IP " +
-                    "changes). Disconnect turns that off."
+                    "changes). Launching apps, switching to HDMI 2, the backlight slider and typing letters " +
+                    "use ADB first. If ADB is off, your macros and app links take over."
+            )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Switch(checked = keysViaAdb, onCheckedChange = { vm.setKeysViaAdb(it) })
+                Text("Send every key press over ADB", color = Color.White, fontSize = 13.sp)
+            }
+            InfoToggle(
+                "Off (default): navigation keys use the fast Wi-Fi remote link, and ADB takes over " +
+                    "automatically if that link drops. On: every key goes over ADB, which needs no remote " +
+                    "link but adds about 0.3 s per press and doesn't repeat well when held."
             )
         }
 
-        Section("Native actions (needs ADB)") {
+        Section("Native actions") {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Switch(checked = nativeBacklight, onCheckedChange = { vm.setNativeBacklight(it) })
                 Text("Backlight slider sets the TV value directly", color = Color.White, fontSize = 13.sp)
@@ -364,7 +235,7 @@ fun LinkScreen(vm: LinkViewModel = hiltViewModel()) {
                 LinkButton("Find backlight") { vm.probeBacklight() }
             }
             Text(
-                if (hdmi2.isBlank()) "HDMI 2 input: not set" else "HDMI 2 input: $hdmi2",
+                if (hdmi2.isBlank()) "HDMI 2 input: not set (the default is used)" else "HDMI 2 input: $hdmi2",
                 color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp,
             )
             inputs.forEach { input ->
@@ -381,20 +252,35 @@ fun LinkScreen(vm: LinkViewModel = hiltViewModel()) {
             }
         }
 
-        Section("Find other devices (Jio set-top box)") {
-            Row {
-                LinkButton(if (scanning) "Scanning…" else "Scan network") { vm.scanNetwork() }
+        Section("Lock screen") {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Switch(
+                    checked = lockOn,
+                    onCheckedChange = { on ->
+                        if (!on) {
+                            NowPlayingService.setEnabled(ctx, false)
+                            lockOn = false
+                        } else if (Build.VERSION.SDK_INT >= 33 && !NowPlayingService.notificationsAllowed(ctx)) {
+                            askNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        } else {
+                            NowPlayingService.setEnabled(ctx, true)
+                            lockOn = true
+                        }
+                    },
+                )
+                Text("Show Now Playing on the lock screen", color = Color.White, fontSize = 13.sp)
             }
             InfoToggle(
-                "Lists devices on your Wi-Fi with open remote (6466), ADB (5555) or Cast (8009/8008) " +
-                    "ports. Cast devices also show their name."
+                "Shows the TV's current title as a media card on your phone's lock screen, with Previous, " +
+                    "Play/Pause and Next sent to the TV over ADB. It needs ADB connected for titles and " +
+                    "the notification permission. The artwork is generated, because the TV doesn't share " +
+                    "real artwork. If the card doesn't appear, check that your phone's lock screen " +
+                    "settings allow media controls and notifications."
             )
-            scan.forEach { Text(it, color = Color.White, fontSize = 13.sp) }
         }
     }
 }
 
-/** Info text that stays hidden until tapped. */
 @Composable
 private fun InfoToggle(text: String) {
     var open by rememberSaveable { mutableStateOf(false) }
